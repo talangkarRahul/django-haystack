@@ -232,6 +232,10 @@ class CharFieldWithTemplateTestCase(TestCase):
         
         foo = CharField(use_template=True, template_name='foo.txt')
         self.assertEqual(foo.template_name, 'foo.txt')
+        
+        # Test the select_template usage.
+        foo = CharField(use_template=True, template_name=['bar.txt', 'foo.txt'])
+        self.assertEqual(foo.template_name, ['bar.txt', 'foo.txt'])
     
     def test_prepare(self):
         mock = MockModel()
@@ -248,3 +252,180 @@ class CharFieldWithTemplateTestCase(TestCase):
         template3 = CharField(use_template=True)
         template3.instance_name = 'template'
         self.assertEqual(template3.prepare(mock), u'Indexed!\n1')
+        
+        template4 = CharField(use_template=True, template_name='search/indexes/foo.txt')
+        template4.instance_name = 'template'
+        self.assertEqual(template4.prepare(mock), u'FOO!\n')
+        
+        template5 = CharField(use_template=True, template_name=['foo.txt', 'search/indexes/bar.txt'])
+        template5.instance_name = 'template'
+        self.assertEqual(template5.prepare(mock), u'BAR!\n')
+
+
+##############################################################################
+# The following tests look like they don't do much, but it's important because
+# we need to verify that the faceted variants behave like the field they
+# emulate. The old-broke behavior was convert everything to string.
+##############################################################################
+
+
+class FacetFieldTestCase(TestCase):
+    def test_init(self):
+        # You shouldn't use the FacetField itself.
+        try:
+            foo = FacetField(model_attr='foo')
+            self.fail()
+        except:
+            pass
+        
+        try:
+            foo_exact = FacetField(facet_for='bar')
+            self.fail()
+        except:
+            pass
+
+
+class FacetCharFieldTestCase(TestCase):
+    def test_init(self):
+        try:
+            foo = FacetCharField(model_attr='foo')
+            foo_exact = FacetCharField(facet_for='bar')
+        except:
+            self.fail()
+        
+        self.assertEqual(foo.facet_for, None)
+        self.assertEqual(foo_exact.null, True)
+        self.assertEqual(foo_exact.facet_for, 'bar')
+    
+    def test_prepare(self):
+        mock = MockModel()
+        mock.user = 'daniel'
+        author = FacetCharField(model_attr='user')
+        
+        self.assertEqual(author.prepare(mock), u'daniel')
+
+
+class FacetIntegerFieldTestCase(TestCase):
+    def test_init(self):
+        try:
+            foo = FacetIntegerField(model_attr='foo')
+            foo_exact = FacetIntegerField(facet_for='bar')
+        except:
+            self.fail()
+        
+        self.assertEqual(foo.facet_for, None)
+        self.assertEqual(foo_exact.null, True)
+        self.assertEqual(foo_exact.facet_for, 'bar')
+    
+    def test_prepare(self):
+        mock = MockModel()
+        mock.user = 'daniel'
+        mock.view_count = 13
+        view_count = FacetIntegerField(model_attr='view_count')
+        
+        self.assertEqual(view_count.prepare(mock), 13)
+
+
+class FacetFloatFieldTestCase(TestCase):
+    def test_init(self):
+        try:
+            foo = FacetFloatField(model_attr='foo')
+            foo_exact = FacetFloatField(facet_for='bar')
+        except:
+            self.fail()
+        
+        self.assertEqual(foo.facet_for, None)
+        self.assertEqual(foo_exact.null, True)
+        self.assertEqual(foo_exact.facet_for, 'bar')
+    
+    def test_prepare(self):
+        mock = MockModel()
+        mock.user = 'daniel'
+        mock.price = 25.65
+        price = FacetFloatField(model_attr='price')
+        
+        self.assertEqual(price.prepare(mock), 25.65)
+
+
+class FacetBooleanFieldTestCase(TestCase):
+    def test_init(self):
+        try:
+            foo = FacetBooleanField(model_attr='foo')
+            foo_exact = FacetBooleanField(facet_for='bar')
+        except:
+            self.fail()
+        
+        self.assertEqual(foo.facet_for, None)
+        self.assertEqual(foo_exact.null, True)
+        self.assertEqual(foo_exact.facet_for, 'bar')
+    
+    def test_prepare(self):
+        mock = MockModel()
+        mock.user = 'daniel'
+        mock.is_active = True
+        is_active = FacetBooleanField(model_attr='is_active')
+        
+        self.assertEqual(is_active.prepare(mock), True)
+
+
+class FacetDateFieldTestCase(TestCase):
+    def test_init(self):
+        try:
+            foo = FacetDateField(model_attr='foo')
+            foo_exact = FacetDateField(facet_for='bar')
+        except:
+            self.fail()
+        
+        self.assertEqual(foo.facet_for, None)
+        self.assertEqual(foo_exact.null, True)
+        self.assertEqual(foo_exact.facet_for, 'bar')
+    
+    def test_prepare(self):
+        mock = MockModel()
+        mock.user = 'daniel'
+        mock.created = datetime.date(2010, 10, 30)
+        created = FacetDateField(model_attr='created')
+        
+        self.assertEqual(created.prepare(mock), datetime.date(2010, 10, 30))
+
+
+class FacetDateTimeFieldTestCase(TestCase):
+    def test_init(self):
+        try:
+            foo = FacetDateTimeField(model_attr='foo')
+            foo_exact = FacetDateTimeField(facet_for='bar')
+        except:
+            self.fail()
+        
+        self.assertEqual(foo.facet_for, None)
+        self.assertEqual(foo_exact.null, True)
+        self.assertEqual(foo_exact.facet_for, 'bar')
+    
+    def test_prepare(self):
+        mock = MockModel()
+        mock.user = 'daniel'
+        mock.created = datetime.datetime(2010, 10, 30, 3, 14, 25)
+        created = FacetDateTimeField(model_attr='created')
+        
+        self.assertEqual(created.prepare(mock), datetime.datetime(2010, 10, 30, 3, 14, 25))
+
+
+class FacetMultiValueFieldTestCase(TestCase):
+    def test_init(self):
+        try:
+            foo = FacetMultiValueField(model_attr='foo')
+            foo_exact = FacetMultiValueField(facet_for='bar')
+        except:
+            self.fail()
+        
+        self.assertEqual(foo.facet_for, None)
+        self.assertEqual(foo_exact.null, True)
+        self.assertEqual(foo_exact.facet_for, 'bar')
+    
+    def test_prepare(self):
+        mock = MockModel()
+        mock.user = 'daniel'
+        mock.sites = [1, 3, 4]
+        sites = FacetMultiValueField(model_attr='sites')
+        
+        self.assertEqual(sites.prepare(mock), [1, 3, 4])

@@ -38,7 +38,16 @@ class SearchQuerySet(object):
         len(self)
         obj_dict = self.__dict__.copy()
         obj_dict['_iter'] = None
+        del obj_dict['site']
         return obj_dict
+
+    def __setstate__(self, dict):
+        """
+        For unpickling.
+        """
+        self.__dict__ = dict
+        from haystack import site as main_site
+        self.site = main_site
     
     def __repr__(self):
         data = list(self[:REPR_OUTPUT_SIZE])
@@ -160,15 +169,16 @@ class SearchQuerySet(object):
         
         for result in results:
             if self._load_all:
-                # We have to deal with integer keys being cast from strings; if this
-                # fails we've got a character pk.
+                # We have to deal with integer keys being cast from strings
+                model_objects = loaded_objects.get(result.model, {})
+                if not result.pk in model_objects:
+                    try:
+                        result.pk = int(result.pk)
+                    except ValueError:
+                        pass
                 try:
-                    result.pk = int(result.pk)
-                except ValueError:
-                    pass
-                try:
-                    result._object = loaded_objects[result.model][result.pk]
-                except (KeyError, IndexError):
+                    result._object = model_objects[result.pk]
+                except KeyError:
                     # The object was either deleted since we indexed or should
                     # be ignored; fail silently.
                     self._ignored_result_count += 1
@@ -336,21 +346,24 @@ class SearchQuerySet(object):
         clone = self._clone()
         
         # Pull out anything wrapped in quotes and do an exact match on it.
-        quote_regex = re.compile(r'([\'"])(.*?)\1')
-        result = quote_regex.search(query_string)
-        
-        while result is not None:
-            full_match = result.group()
-            query_string = query_string.replace(full_match, '', 1)
-            
-            exact_match = result.groups()[1]
-            clone = clone.filter(content=clone.query.clean(exact_match))
-            
-            # Re-search the string for other exact matches.
-            result = quote_regex.search(query_string)
+        open_quote_position = None
+        non_exact_query = query_string
+
+        for offset, char in enumerate(query_string):
+            if char == '"':
+                if open_quote_position != None:
+                    current_match = non_exact_query[open_quote_position + 1:offset]
+
+                    if current_match:
+                        clone = clone.filter(content=clone.query.clean(current_match))
+
+                    non_exact_query = non_exact_query.replace('"%s"' % current_match, '', 1)
+                    open_quote_position = None
+                else:
+                    open_quote_position = offset
         
         # Pseudo-tokenize the rest of the query.
-        keywords = query_string.split()
+        keywords = non_exact_query.split()
         
         # Loop through keywords and add filters to the query.
         for keyword in keywords:
@@ -373,13 +386,11 @@ class SearchQuerySet(object):
     
     def count(self):
         """Returns the total number of matching results."""
-        clone = self._clone()
-        return len(clone)
+        return len(self)
     
     def best_match(self):
         """Returns the best/top search result that matches the query."""
-        clone = self._clone()
-        return clone[0]
+        return self[0]
     
     def latest(self, date_field):
         """Returns the most recent search result that matches the query."""

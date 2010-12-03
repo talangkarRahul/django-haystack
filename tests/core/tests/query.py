@@ -11,12 +11,22 @@ from haystack.exceptions import HaystackError, FacetingError, NotRegistered
 from haystack.models import SearchResult
 from haystack.query import SearchQuerySet, EmptySearchQuerySet
 from haystack.sites import SearchSite
-from core.models import MockModel, AnotherMockModel
-from core.tests.mocks import MockSearchQuery, MockSearchBackend, MixedMockSearchBackend, MOCK_SEARCH_RESULTS
+from core.models import MockModel, AnotherMockModel, CharPKMockModel
+from core.tests.mocks import MockSearchQuery, MockSearchBackend, CharPKMockSearchBackend, MixedMockSearchBackend, MOCK_SEARCH_RESULTS
 try:
     set
 except NameError:
     from sets import Set as set
+
+test_pickling = True
+
+try:
+    import cPickle as pickle
+except ImportError:
+    try:
+        import pickle
+    except ImportError:
+        test_pickling = False
 
 
 class SQTestCase(TestCase):
@@ -31,6 +41,7 @@ class SQTestCase(TestCase):
         self.assertEqual(sq.split_expression('foo__gte'), ('foo', 'gte'))
         self.assertEqual(sq.split_expression('foo__in'), ('foo', 'in'))
         self.assertEqual(sq.split_expression('foo__startswith'), ('foo', 'startswith'))
+        self.assertEqual(sq.split_expression('foo__range'), ('foo', 'range'))
         
         # Unrecognized filter. Fall back to exact.
         self.assertEqual(sq.split_expression('foo__moof'), ('foo', 'exact'))
@@ -151,34 +162,34 @@ class BaseSearchQueryTestCase(TestCase):
     
     def test_add_field_facet(self):
         self.bsq.add_field_facet('foo')
-        self.assertEqual(self.bsq.facets, set(['foo_exact']))
+        self.assertEqual(self.bsq.facets, set(['foo']))
         
         self.bsq.add_field_facet('bar')
-        self.assertEqual(self.bsq.facets, set(['foo_exact', 'bar_exact']))
+        self.assertEqual(self.bsq.facets, set(['foo', 'bar']))
     
     def test_add_date_facet(self):
         self.bsq.add_date_facet('foo', start_date=datetime.date(2009, 2, 25), end_date=datetime.date(2009, 3, 25), gap_by='day')
-        self.assertEqual(self.bsq.date_facets, {'foo_exact': {'gap_by': 'day', 'start_date': datetime.date(2009, 2, 25), 'end_date': datetime.date(2009, 3, 25), 'gap_amount': 1}})
+        self.assertEqual(self.bsq.date_facets, {'foo': {'gap_by': 'day', 'start_date': datetime.date(2009, 2, 25), 'end_date': datetime.date(2009, 3, 25), 'gap_amount': 1}})
         
         self.bsq.add_date_facet('bar', start_date=datetime.date(2008, 1, 1), end_date=datetime.date(2009, 12, 1), gap_by='month')
-        self.assertEqual(self.bsq.date_facets, {'foo_exact': {'gap_by': 'day', 'start_date': datetime.date(2009, 2, 25), 'end_date': datetime.date(2009, 3, 25), 'gap_amount': 1}, 'bar_exact': {'gap_by': 'month', 'start_date': datetime.date(2008, 1, 1), 'end_date': datetime.date(2009, 12, 1), 'gap_amount': 1}})
+        self.assertEqual(self.bsq.date_facets, {'foo': {'gap_by': 'day', 'start_date': datetime.date(2009, 2, 25), 'end_date': datetime.date(2009, 3, 25), 'gap_amount': 1}, 'bar': {'gap_by': 'month', 'start_date': datetime.date(2008, 1, 1), 'end_date': datetime.date(2009, 12, 1), 'gap_amount': 1}})
     
     def test_add_query_facet(self):
         self.bsq.add_query_facet('foo', 'bar')
-        self.assertEqual(self.bsq.query_facets, [('foo_exact', 'bar')])
+        self.assertEqual(self.bsq.query_facets, [('foo', 'bar')])
         
         self.bsq.add_query_facet('moof', 'baz')
-        self.assertEqual(self.bsq.query_facets, [('foo_exact', 'bar'), ('moof_exact', 'baz')])
+        self.assertEqual(self.bsq.query_facets, [('foo', 'bar'), ('moof', 'baz')])
         
         self.bsq.add_query_facet('foo', 'baz')
-        self.assertEqual(self.bsq.query_facets, [('foo_exact', 'bar'), ('moof_exact', 'baz'), ('foo_exact', 'baz')])
+        self.assertEqual(self.bsq.query_facets, [('foo', 'bar'), ('moof', 'baz'), ('foo', 'baz')])
     
     def test_add_narrow_query(self):
-        self.bsq.add_narrow_query('foo_exact:bar')
-        self.assertEqual(self.bsq.narrow_queries, set(['foo_exact:bar']))
+        self.bsq.add_narrow_query('foo:bar')
+        self.assertEqual(self.bsq.narrow_queries, set(['foo:bar']))
         
-        self.bsq.add_narrow_query('moof_exact:baz')
-        self.assertEqual(self.bsq.narrow_queries, set(['foo_exact:bar', 'moof_exact:baz']))
+        self.bsq.add_narrow_query('moof:baz')
+        self.assertEqual(self.bsq.narrow_queries, set(['foo:bar', 'moof:baz']))
     
     def test_run(self):
         # Stow.
@@ -284,6 +295,7 @@ class SearchQuerySetTestCase(TestCase):
         self.old_site = haystack.site
         test_site = SearchSite()
         test_site.register(MockModel)
+        test_site.register(CharPKMockModel)
         haystack.site = test_site
         
         backends.reset_search_queries()
@@ -468,8 +480,16 @@ class SearchQuerySetTestCase(TestCase):
         self.assertEqual(len(self.bsqs.raw_search('(content__exact hello AND content__exact world)')), 1)
     
     def test_load_all(self):
+        # Models with character primary keys
+        sqs = SearchQuerySet(query=MockSearchQuery(backend=CharPKMockSearchBackend()))
+        results = sqs.load_all().all()
+        self.assertEqual(len(results._result_cache), 0)
+        results._fill_cache(0, 2)
+        self.assertEqual(len([result for result in results._result_cache if result is not None]), 2)
+        
         # If nothing is registered, you get nothing.
         haystack.site.unregister(MockModel)
+        haystack.site.unregister(CharPKMockModel)
         sqs = self.msqs.load_all()
         self.assert_(isinstance(sqs, SearchQuerySet))
         self.assertEqual(len(sqs), 0)
@@ -487,11 +507,11 @@ class SearchQuerySetTestCase(TestCase):
         
         sqs = self.bsqs.auto_query('test "my thing" search \'moar quotes\' -stuff')
         self.assert_(isinstance(sqs, SearchQuerySet))
-        self.assertEqual(repr(sqs.query.query_filter), '<SQ: AND (content__exact=my thing AND content__exact=moar quotes AND content__exact=test AND content__exact=search AND NOT (content__exact=stuff))>')
+        self.assertEqual(repr(sqs.query.query_filter), "<SQ: AND (content__exact=my thing AND content__exact=test AND content__exact=search AND content__exact='moar AND content__exact=quotes' AND NOT (content__exact=stuff))>")
         
         sqs = self.bsqs.auto_query('test "my thing" search \'moar quotes\' "foo -stuff')
         self.assert_(isinstance(sqs, SearchQuerySet))
-        self.assertEqual(repr(sqs.query.query_filter), '<SQ: AND (content__exact=my thing AND content__exact=moar quotes AND content__exact=test AND content__exact=search AND content__exact="foo AND NOT (content__exact=stuff))>')
+        self.assertEqual(repr(sqs.query.query_filter), '<SQ: AND (content__exact=my thing AND content__exact=test AND content__exact=search AND content__exact=\'moar AND content__exact=quotes\' AND content__exact="foo AND NOT (content__exact=stuff))>')
         
         sqs = self.bsqs.auto_query('test - stuff')
         self.assert_(isinstance(sqs, SearchQuerySet))
@@ -651,3 +671,41 @@ class EmptySearchQuerySetTestCase(TestCase):
         EmptySearchQuerySets can be used in templates.
         """
         self.assertRaises(TypeError, lambda: self.esqs['count'])
+
+
+if test_pickling:
+    class PickleSearchQuerySetTestCase(TestCase):
+        def setUp(self):
+            super(PickleSearchQuerySetTestCase, self).setUp()
+            self.bsqs = SearchQuerySet(query=DummySearchQuery(backend=DummySearchBackend()))
+            self.msqs = SearchQuerySet(query=MockSearchQuery(backend=MockSearchBackend()))
+            self.mmsqs = SearchQuerySet(query=MockSearchQuery(backend=MixedMockSearchBackend()))
+            
+            # Stow.
+            self.old_debug = settings.DEBUG
+            settings.DEBUG = True
+            self.old_site = haystack.site
+            test_site = SearchSite()
+            test_site.register(MockModel)
+            test_site.register(CharPKMockModel)
+            haystack.site = test_site
+            
+            backends.reset_search_queries()
+        
+        def tearDown(self):
+            # Restore.
+            haystack.site = self.old_site
+            settings.DEBUG = self.old_debug
+            super(PickleSearchQuerySetTestCase, self).tearDown()
+        
+        def test_pickling(self):
+            results = self.msqs.all()
+            
+            for res in results:
+                # Make sure the cache is full.
+                pass
+            
+            in_a_pickle = pickle.dumps(results)
+            like_a_cuke = pickle.loads(in_a_pickle)
+            self.assertEqual(len(like_a_cuke), len(results))
+            self.assertEqual(like_a_cuke[0].id, results[0].id)

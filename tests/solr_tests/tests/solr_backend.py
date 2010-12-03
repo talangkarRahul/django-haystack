@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import datetime
 import logging
 import pysolr
@@ -9,11 +10,21 @@ from haystack.backends.solr_backend import SearchBackend, SearchQuery
 from haystack.exceptions import HaystackError
 from haystack.query import SearchQuerySet, RelatedSearchQuerySet, SQ
 from haystack.sites import SearchSite
-from core.models import MockModel, AnotherMockModel
+from core.models import MockModel, AnotherMockModel, AFourthMockModel
 try:
     set
 except NameError:
     from sets import Set as set
+
+test_pickling = True
+
+try:
+    import cPickle as pickle
+except ImportError:
+    try:
+        import pickle
+    except ImportError:
+        test_pickling = False
 
 
 def clear_solr_index():
@@ -23,13 +34,13 @@ def clear_solr_index():
     raw_solr.delete(q='*:*')
 
 
-class SolrMockSearchIndex(RealTimeSearchIndex):
+class SolrMockSearchIndex(SearchIndex):
     text = CharField(document=True, use_template=True)
     name = CharField(model_attr='author', faceted=True)
     pub_date = DateField(model_attr='pub_date')
 
 
-class SolrMaintainTypeMockSearchIndex(RealTimeSearchIndex):
+class SolrMaintainTypeMockSearchIndex(SearchIndex):
     text = CharField(document=True, use_template=True)
     month = CharField(indexed=False)
     pub_date = DateField(model_attr='pub_date')
@@ -38,13 +49,13 @@ class SolrMaintainTypeMockSearchIndex(RealTimeSearchIndex):
         return "%02d" % obj.pub_date.month
 
 
-class SolrMockModelSearchIndex(RealTimeSearchIndex):
+class SolrMockModelSearchIndex(SearchIndex):
     text = CharField(model_attr='foo', document=True)
     name = CharField(model_attr='author')
     pub_date = DateField(model_attr='pub_date')
 
 
-class SolrAnotherMockModelSearchIndex(RealTimeSearchIndex):
+class SolrAnotherMockModelSearchIndex(SearchIndex):
     text = CharField(document=True)
     name = CharField(model_attr='author')
     pub_date = DateField(model_attr='pub_date')
@@ -53,7 +64,17 @@ class SolrAnotherMockModelSearchIndex(RealTimeSearchIndex):
         return u"You might be searching for the user %s" % obj.author
 
 
-class SolrRoundTripSearchIndex(RealTimeSearchIndex):
+class SolrBoostMockSearchIndex(SearchIndex):
+    text = CharField(
+        document=True, use_template=True,
+        template_name='search/indexes/core/mockmodel_template.txt'
+    )
+    author = CharField(model_attr='author', weight=2.0)
+    editor = CharField(model_attr='editor')
+    pub_date = DateField(model_attr='pub_date')
+
+
+class SolrRoundTripSearchIndex(SearchIndex):
     text = CharField(document=True, default='')
     name = CharField()
     is_active = BooleanField()
@@ -78,6 +99,18 @@ class SolrRoundTripSearchIndex(RealTimeSearchIndex):
             'sites': [3, 5, 1],
         })
         return prepped
+
+
+class SolrComplexFacetsMockSearchIndex(SearchIndex):
+    text = CharField(document=True, default='')
+    name = CharField(faceted=True)
+    is_active = BooleanField(faceted=True)
+    post_count = IntegerField()
+    post_count_i = FacetIntegerField(facet_for='post_count')
+    average_rating = FloatField(faceted=True)
+    pub_date = DateField(faceted=True)
+    created = DateTimeField(faceted=True)
+    sites = MultiValueField(faceted=True)
 
 
 class SolrSearchBackendTestCase(TestCase):
@@ -292,6 +325,119 @@ class SolrSearchBackendTestCase(TestCase):
                 'multi_valued': 'false'
             }
         ])
+        
+        self.site.unregister(MockModel)
+        self.site.register(MockModel, SolrComplexFacetsMockSearchIndex)
+        (content_field_name, fields) = self.sb.build_schema(self.site.all_searchfields())
+        self.assertEqual(content_field_name, 'text')
+        self.assertEqual(len(fields), 15)
+        self.assertEqual(fields, [
+            {
+                'indexed': 'true',
+                'type': 'text',
+                'stored': 'true',
+                'field_name': 'name',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'boolean',
+                'stored': 'true',
+                'field_name': 'is_active_exact',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'date',
+                'stored': 'true',
+                'field_name': 'created',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'slong',
+                'stored': 'true',
+                'field_name': 'post_count',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'date',
+                'stored': 'true',
+                'field_name': 'created_exact',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'string',
+                'stored': 'true',
+                'field_name': 'sites_exact',
+                'multi_valued': 'true'
+            },
+            {
+                'indexed': 'true',
+                'type': 'boolean',
+                'stored': 'true',
+                'field_name': 'is_active',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'text',
+                'stored': 'true',
+                'field_name': 'sites',
+                'multi_valued': 'true'
+            },
+            {
+                'indexed': 'true',
+                'type': 'slong',
+                'stored': 'true',
+                'field_name': 'post_count_i',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'sfloat',
+                'stored': 'true',
+                'field_name': 'average_rating',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'text',
+                'stored': 'true',
+                'field_name': 'text',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'date',
+                'stored': 'true',
+                'field_name': 'pub_date_exact',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'string',
+                'stored': 'true',
+                'field_name': 'name_exact',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'date',
+                'stored': 'true',
+                'field_name': 'pub_date',
+                'multi_valued': 'false'
+            },
+            {
+                'indexed': 'true',
+                'type': 'sfloat',
+                'stored': 'true',
+                'field_name': 'average_rating_exact',
+                'multi_valued': 'false'
+            }
+        ])
     
     def test_verify_type(self):
         import haystack
@@ -490,6 +636,17 @@ class LiveSolrSearchQuerySetTestCase(TestCase):
         self.assertEqual(int(results[21].pk), 22)
         self.assertEqual(len(backends.queries), 1)
     
+    def test_count(self):
+        backends.reset_search_queries()
+        self.assertEqual(len(backends.queries), 0)
+        sqs = self.sqs.all()
+        self.assertEqual(sqs.count(), 23)
+        self.assertEqual(sqs.count(), 23)
+        self.assertEqual(len(sqs), 23)
+        self.assertEqual(sqs.count(), 23)
+        # Should only execute one query to count the length of the result set.
+        self.assertEqual(len(backends.queries), 1)
+    
     def test_manual_iter(self):
         results = self.sqs.all()
         
@@ -673,6 +830,53 @@ class LiveSolrSearchQuerySetTestCase(TestCase):
         fire_the_iterator_and_fill_cache = [result for result in results]
         self.assertEqual(results._cache_is_full(), True)
         self.assertEqual(len(backends.queries), 5)
+    
+    def test_quotes_regression(self):
+        sqs = self.sqs.auto_query("44°48'40''N 20°28'32''E")
+        # Should not have empty terms.
+        self.assertEqual(sqs.query.build_query(), u"(44\ufffd\ufffd48'40''N AND 20\ufffd\ufffd28'32''E)")
+        # Should not cause Solr to 500.
+        self.assertEqual(sqs.count(), 0)
+        
+        sqs = self.sqs.auto_query('blazing')
+        self.assertEqual(sqs.query.build_query(), u'blazing')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('blazing saddles')
+        self.assertEqual(sqs.query.build_query(), u'(blazing AND saddles)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('"blazing saddles')
+        self.assertEqual(sqs.query.build_query(), u'(\\"blazing AND saddles)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('"blazing saddles"')
+        self.assertEqual(sqs.query.build_query(), u'"blazing saddles"')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('mel "blazing saddles"')
+        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('mel "blazing \'saddles"')
+        self.assertEqual(sqs.query.build_query(), u'("blazing \'saddles" AND mel)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('mel "blazing \'\'saddles"')
+        self.assertEqual(sqs.query.build_query(), u'("blazing \'\'saddles" AND mel)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('mel "blazing \'\'saddles"\'')
+        self.assertEqual(sqs.query.build_query(), u'("blazing \'\'saddles" AND mel AND \')')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('mel "blazing \'\'saddles"\'"')
+        self.assertEqual(sqs.query.build_query(), u'("blazing \'\'saddles" AND mel AND \'\\")')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('"blazing saddles" mel')
+        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('"blazing saddles" mel brooks')
+        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel AND brooks)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('mel "blazing saddles" brooks')
+        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel AND brooks)')
+        self.assertEqual(sqs.count(), 0)
+        sqs = self.sqs.auto_query('mel "blazing saddles" "brooks')
+        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel AND \\"brooks)')
+        self.assertEqual(sqs.count(), 0)
 
 
 class LiveSolrMoreLikeThisTestCase(TestCase):
@@ -696,14 +900,10 @@ class LiveSolrMoreLikeThisTestCase(TestCase):
         haystack.site = test_site
         
         self.sqs = SearchQuerySet()
-        
-        # Force indexing of the content.
-        for mock in MockModel.objects.all():
-            mock.save()
-        
-        # Force indexing of the content.
-        for mock in AnotherMockModel.objects.all():
-            mock.save()
+
+        test_site.get_index(MockModel).update()
+        test_site.get_index(AnotherMockModel).update()
+
     
     def tearDown(self):
         # Restore.
@@ -713,24 +913,28 @@ class LiveSolrMoreLikeThisTestCase(TestCase):
     
     def test_more_like_this(self):
         mlt = self.sqs.more_like_this(MockModel.objects.get(pk=1))
-        self.assertEqual(mlt.count(), 25)
+        self.assertEqual(mlt.count(), 24)
         self.assertEqual([result.pk for result in mlt], ['6', '14', '4', '10', '22', '5', '3', '12', '2', '23', '18', '19', '13', '7', '15', '21', '9', '1', '2', '20', '16', '17', '8', '11'])
+        self.assertEqual(len([result.pk for result in mlt]), 24)
         
         alt_mlt = self.sqs.filter(name='daniel3').more_like_this(MockModel.objects.get(pk=3))
-        self.assertEqual(alt_mlt.count(), 11)
+        self.assertEqual(alt_mlt.count(), 10)
         self.assertEqual([result.pk for result in alt_mlt], ['23', '13', '17', '16', '22', '19', '4', '10', '1', '2'])
+        self.assertEqual(len([result.pk for result in alt_mlt]), 10)
         
         alt_mlt_with_models = self.sqs.models(MockModel).more_like_this(MockModel.objects.get(pk=1))
-        self.assertEqual(alt_mlt_with_models.count(), 23)
+        self.assertEqual(alt_mlt_with_models.count(), 22)
         self.assertEqual([result.pk for result in alt_mlt_with_models], ['6', '14', '4', '10', '22', '5', '3', '12', '2', '23', '18', '19', '13', '7', '15', '21', '9', '20', '16', '17', '8', '11'])
+        self.assertEqual(len([result.pk for result in alt_mlt_with_models]), 22)
         
         if hasattr(MockModel.objects, 'defer'):
             # Make sure MLT works with deferred bits.
             mi = MockModel.objects.defer('foo').get(pk=1)
             self.assertEqual(mi._deferred, True)
             deferred = self.sqs.models(MockModel).more_like_this(mi)
-            self.assertEqual(alt_mlt_with_models.count(), 23)
-            self.assertEqual([result.pk for result in alt_mlt_with_models], ['6', '14', '4', '10', '22', '5', '3', '12', '2', '23', '18', '19', '13', '7', '15', '21', '9', '20', '16', '17', '8', '11'])
+            self.assertEqual(deferred.count(), 0)
+            self.assertEqual([result.pk for result in deferred], [])
+            self.assertEqual(len([result.pk for result in deferred]), 0)
 
 
 class LiveSolrRoundTripTestCase(TestCase):
@@ -783,3 +987,100 @@ class LiveSolrRoundTripTestCase(TestCase):
         self.assertEqual(result.created, datetime.datetime(2009, 11, 21, 21, 31, 00))
         self.assertEqual(result.tags, ['staff', 'outdoor', 'activist', 'scientist'])
         self.assertEqual(result.sites, [3, 5, 1])
+
+
+if test_pickling:
+    class LiveSolrPickleTestCase(TestCase):
+        fixtures = ['bulk_data.json']
+        
+        def setUp(self):
+            super(LiveSolrPickleTestCase, self).setUp()
+            
+            # Wipe it clean.
+            clear_solr_index()
+            
+            # With the models registered, you get the proper bits.
+            import haystack
+            from haystack.sites import SearchSite
+            
+            # Stow.
+            self.old_site = haystack.site
+            test_site = SearchSite()
+            test_site.register(MockModel, SolrMockModelSearchIndex)
+            test_site.register(AnotherMockModel, SolrAnotherMockModelSearchIndex)
+            haystack.site = test_site
+            
+            self.sqs = SearchQuerySet()
+            
+            test_site.get_index(MockModel).update()
+            test_site.get_index(AnotherMockModel).update()
+        
+        def tearDown(self):
+            # Restore.
+            import haystack
+            haystack.site = self.old_site
+            super(LiveSolrPickleTestCase, self).tearDown()
+        
+        def test_pickling(self):
+            results = self.sqs.all()
+            
+            for res in results:
+                # Make sure the cache is full.
+                pass
+            
+            in_a_pickle = pickle.dumps(results)
+            like_a_cuke = pickle.loads(in_a_pickle)
+            self.assertEqual(len(like_a_cuke), len(results))
+            self.assertEqual(like_a_cuke[0].id, results[0].id)
+
+
+class SolrBoostBackendTestCase(TestCase):
+    def setUp(self):
+        super(SolrBoostBackendTestCase, self).setUp()
+        
+        # Wipe it clean.
+        self.raw_solr = pysolr.Solr(settings.HAYSTACK_SOLR_URL)
+        clear_solr_index()
+        
+        self.site = SearchSite()
+        self.sb = SearchBackend(site=self.site)
+        self.smmi = SolrBoostMockSearchIndex(AFourthMockModel, backend=self.sb)
+        self.site.register(AFourthMockModel, SolrBoostMockSearchIndex)
+        
+        # Stow.
+        import haystack
+        self.old_site = haystack.site
+        haystack.site = self.site
+        self.sample_objs = []
+        
+        for i in xrange(1, 5):
+            mock = AFourthMockModel()
+            mock.id = i
+            
+            if i % 2:
+                mock.author = 'daniel'
+                mock.editor = 'david'
+            else:
+                mock.author = 'david'
+                mock.editor = 'daniel'
+            
+            mock.pub_date = datetime.date(2009, 2, 25) - datetime.timedelta(days=i)
+            self.sample_objs.append(mock)
+    
+    def tearDown(self):
+        import haystack
+        haystack.site = self.old_site
+        super(SolrBoostBackendTestCase, self).tearDown()
+    
+    def test_boost(self):
+        self.sb.update(self.smmi, self.sample_objs)
+        self.assertEqual(self.raw_solr.search('*:*').hits, 4)
+        
+        results = SearchQuerySet().filter(SQ(author='daniel') | SQ(editor='daniel'))
+        
+        self.assertEqual([result.id for result in results], [
+            'core.afourthmockmodel.1',
+            'core.afourthmockmodel.3',
+            'core.afourthmockmodel.2',
+            'core.afourthmockmodel.4'
+        ])

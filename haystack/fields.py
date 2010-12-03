@@ -15,9 +15,12 @@ DATETIME_REGEX = re.compile('^(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})(T|
 
 class SearchField(object):
     """The base implementation of a search field."""
+    field_type = None
+    
     def __init__(self, model_attr=None, use_template=False, template_name=None,
                  document=False, indexed=True, stored=True, faceted=False,
-                 default=NOT_PROVIDED, null=False, index_fieldname=None):
+                 default=NOT_PROVIDED, null=False, index_fieldname=None,
+                 facet_class=None, weight=1.0):
         # Track what the index thinks this field is called.
         self.instance_name = None
         self.model_attr = model_attr
@@ -30,6 +33,15 @@ class SearchField(object):
         self._default = default
         self.null = null
         self.index_fieldname = index_fieldname
+        self.weight = weight
+        self.is_multivalued = False
+        
+        # We supply the facet_class for making it easy to create a faceted
+        # field based off of this field.
+        self.facet_class = facet_class
+        
+        if self.facet_class is None:
+            self.facet_class = FacetCharField
         
         self.set_instance_name(None)
     
@@ -107,11 +119,14 @@ class SearchField(object):
             raise SearchFieldError("This field requires either its instance_name variable to be populated or an explicit template_name in order to load the correct template.")
         
         if self.template_name is not None:
-            template_name = self.template_name
+            template_names = self.template_name
+            
+            if not isinstance(template_names, (list, tuple)):
+                template_names = [template_names]
         else:
-            template_name = 'search/indexes/%s/%s_%s.txt' % (obj._meta.app_label, obj._meta.module_name, self.instance_name)
+            template_names = ['search/indexes/%s/%s_%s.txt' % (obj._meta.app_label, obj._meta.module_name, self.instance_name)]
         
-        t = loader.get_template(template_name)
+        t = loader.select_template(template_names)
         return t.render(Context({'object': obj}))
     
     def convert(self, value):
@@ -125,6 +140,14 @@ class SearchField(object):
 
 
 class CharField(SearchField):
+    field_type = 'string'
+    
+    def __init__(self, **kwargs):
+        if kwargs.get('facet_class') is None:
+            kwargs['facet_class'] = FacetCharField
+        
+        super(CharField, self).__init__(**kwargs)
+    
     def prepare(self, obj):
         return self.convert(super(CharField, self).prepare(obj))
     
@@ -136,6 +159,14 @@ class CharField(SearchField):
 
 
 class IntegerField(SearchField):
+    field_type = 'integer'
+    
+    def __init__(self, **kwargs):
+        if kwargs.get('facet_class') is None:
+            kwargs['facet_class'] = FacetIntegerField
+        
+        super(IntegerField, self).__init__(**kwargs)
+    
     def prepare(self, obj):
         return self.convert(super(IntegerField, self).prepare(obj))
     
@@ -147,6 +178,14 @@ class IntegerField(SearchField):
 
 
 class FloatField(SearchField):
+    field_type = 'float'
+    
+    def __init__(self, **kwargs):
+        if kwargs.get('facet_class') is None:
+            kwargs['facet_class'] = FacetFloatField
+        
+        super(FloatField, self).__init__(**kwargs)
+    
     def prepare(self, obj):
         return self.convert(super(FloatField, self).prepare(obj))
     
@@ -158,6 +197,14 @@ class FloatField(SearchField):
 
 
 class BooleanField(SearchField):
+    field_type = 'boolean'
+    
+    def __init__(self, **kwargs):
+        if kwargs.get('facet_class') is None:
+            kwargs['facet_class'] = FacetBooleanField
+        
+        super(BooleanField, self).__init__(**kwargs)
+    
     def prepare(self, obj):
         return self.convert(super(BooleanField, self).prepare(obj))
     
@@ -169,6 +216,14 @@ class BooleanField(SearchField):
 
 
 class DateField(SearchField):
+    field_type = 'date'
+    
+    def __init__(self, **kwargs):
+        if kwargs.get('facet_class') is None:
+            kwargs['facet_class'] = FacetDateField
+        
+        super(DateField, self).__init__(**kwargs)
+    
     def convert(self, value):
         if value is None:
             return None
@@ -186,6 +241,14 @@ class DateField(SearchField):
 
 
 class DateTimeField(SearchField):
+    field_type = 'datetime'
+    
+    def __init__(self, **kwargs):
+        if kwargs.get('facet_class') is None:
+            kwargs['facet_class'] = FacetDateTimeField
+        
+        super(DateTimeField, self).__init__(**kwargs)
+    
     def convert(self, value):
         if value is None:
             return None
@@ -203,6 +266,15 @@ class DateTimeField(SearchField):
 
 
 class MultiValueField(SearchField):
+    field_type = 'string'
+    
+    def __init__(self, **kwargs):
+        if kwargs.get('facet_class') is None:
+            kwargs['facet_class'] = FacetMultiValueField
+        
+        super(MultiValueField, self).__init__(**kwargs)
+        self.is_multivalued = True
+    
     def prepare(self, obj):
         return self.convert(super(MultiValueField, self).prepare(obj))
     
@@ -211,3 +283,72 @@ class MultiValueField(SearchField):
             return None
         
         return list(value)
+
+
+class FacetField(SearchField):
+    """
+    ``FacetField`` is slightly different than the other fields because it can
+    work in conjunction with other fields as its data source.
+    
+    Accepts an optional ``facet_for`` kwarg, which should be the field name
+    (not ``index_fieldname``) of the field it should pull data from.
+    """
+    instance_name = None
+    
+    def __init__(self, **kwargs):
+        handled_kwargs = self.handle_facet_parameters(kwargs)
+        super(FacetField, self).__init__(**handled_kwargs)
+
+    def handle_facet_parameters(self, kwargs):
+        if kwargs.get('faceted', False):
+            raise SearchFieldError("FacetField (%s) does not accept the 'faceted' argument." % self.instance_name)
+        
+        if not kwargs.get('null', True):
+            raise SearchFieldError("FacetField (%s) does not accept False for the 'null' argument." % self.instance_name)
+        
+        if not kwargs.get('indexed', True):
+            raise SearchFieldError("FacetField (%s) does not accept False for the 'indexed' argument." % self.instance_name)
+        
+        if kwargs.get('facet_class'):
+            raise SearchFieldError("FacetField (%s) does not accept the 'facet_class' argument." % self.instance_name)
+        
+        self.facet_for = None
+        self.facet_class = None
+        
+        # Make sure the field is nullable.
+        kwargs['null'] = True
+        
+        if 'facet_for' in kwargs:
+            self.facet_for = kwargs['facet_for']
+            del(kwargs['facet_for'])
+        
+        return kwargs
+    
+    def get_facet_for_name(self):
+        return self.facet_for or self.instance_name
+
+
+class FacetCharField(FacetField, CharField):
+    pass
+    
+class FacetIntegerField(FacetField, IntegerField):
+    pass
+    
+class FacetFloatField(FacetField, FloatField):
+    pass
+
+
+class FacetBooleanField(FacetField, BooleanField):
+    pass
+
+
+class FacetDateField(FacetField, DateField):
+    pass
+
+
+class FacetDateTimeField(FacetField, DateTimeField):
+    pass
+
+
+class FacetMultiValueField(FacetField, MultiValueField):
+    pass

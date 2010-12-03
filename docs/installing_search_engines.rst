@@ -25,7 +25,7 @@ You'll need to revise your schema. You can generate this from your application
 it in ``apache-solr-1.3.0/example/solr/conf/schema.xml``. Then restart Solr.
 
 You'll also need a Solr binding, ``pysolr``. The official ``pysolr`` package,
-distributed via PyPI, is the best version to use (2.0.9+). Place ``pysolr.py``
+distributed via PyPI, is the best version to use (2.0.13+). Place ``pysolr.py``
 somewhere on your ``PYTHONPATH``.
 
 .. note::
@@ -85,20 +85,19 @@ your ``SearchIndex`` classes (in this case, assuming the main field is called
 Whoosh
 ======
 
-Official Download Location: http://whoosh.ca/
+Official Download Location: http://bitbucket.org/mchaput/whoosh/
 
 Whoosh is pure Python, so it's a great option for getting started quickly and
-for development, though it does work for small scale live deployments. With the
-0.3.1+ releases, Whoosh has become much more performant, stable and better
-tested. The current recommended version is 0.3.15+. You can install via PyPI_
-using::
+for development, though it does work for small scale live deployments. The
+current recommended version is 1.3.1+. You can install via PyPI_ using::
 
     sudo easy_install whoosh
     # ... or ...
     sudo pip install whoosh
 
 Note that, while capable otherwise, the Whoosh backend does not currently
-support "More Like This" or faceting.
+support "More Like This" or faceting. Support for these features has recently
+been added to Whoosh itself & may be present in a future release.
 
 .. _PyPI: http://pypi.python.org/pypi/Whoosh/
 

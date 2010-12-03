@@ -3,12 +3,11 @@ import sys
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models.loading import get_model
-from django.utils.encoding import force_unicode
 from haystack.backends import BaseSearchBackend, BaseSearchQuery, log_query
+from haystack.constants import ID, DJANGO_CT, DJANGO_ID
 from haystack.exceptions import MissingDependency, MoreLikeThisError
-from haystack.fields import DateField, DateTimeField, IntegerField, FloatField, BooleanField, MultiValueField
 from haystack.models import SearchResult
-from haystack.utils import get_identifier, get_facet_field_name
+from haystack.utils import get_identifier
 try:
     set
 except NameError:
@@ -69,7 +68,7 @@ class SearchBackend(BaseSearchBackend):
         
         if len(docs) > 0:
             try:
-                self.conn.add(docs, commit=commit)
+                self.conn.add(docs, commit=commit, boost=index.get_field_weights())
             except (IOError, SolrError), e:
                 self.log.error("Failed to add documents to Solr: %s", e)
     
@@ -77,7 +76,11 @@ class SearchBackend(BaseSearchBackend):
         solr_id = get_identifier(obj_or_string)
         
         try:
-            self.conn.delete(id=solr_id, commit=commit)
+            kwargs = {
+                'commit': commit,
+                ID: solr_id
+            }
+            self.conn.delete(**kwargs)
         except (IOError, SolrError), e:
             self.log.error("Failed to remove document '%s' from Solr: %s", solr_id, e)
     
@@ -90,7 +93,7 @@ class SearchBackend(BaseSearchBackend):
                 models_to_delete = []
                 
                 for model in models:
-                    models_to_delete.append("django_ct:%s.%s" % (model._meta.app_label, model._meta.module_name))
+                    models_to_delete.append("%s:%s.%s" % (DJANGO_CT, model._meta.app_label, model._meta.module_name))
                 
                 self.conn.delete(q=" OR ".join(models_to_delete), commit=commit)
             
@@ -177,7 +180,7 @@ class SearchBackend(BaseSearchBackend):
             registered_models = self.build_registered_models_list()
             
             if len(registered_models) > 0:
-                narrow_queries.add('django_ct:(%s)' % ' OR '.join(registered_models))
+                narrow_queries.add('%s:(%s)' % (DJANGO_CT, ' OR '.join(registered_models)))
         
         if narrow_queries is not None:
             kwargs['fq'] = list(narrow_queries)
@@ -225,7 +228,7 @@ class SearchBackend(BaseSearchBackend):
             registered_models = self.build_registered_models_list()
             
             if len(registered_models) > 0:
-                narrow_queries.add('django_ct:(%s)' % ' OR '.join(registered_models))
+                narrow_queries.add('%s:(%s)' % (DJANGO_CT, ' OR '.join(registered_models)))
         
         if additional_query_string:
             narrow_queries.add(additional_query_string)
@@ -233,7 +236,7 @@ class SearchBackend(BaseSearchBackend):
         if narrow_queries:
             params['fq'] = list(narrow_queries)
         
-        query = "id:%s" % get_identifier(model_instance)
+        query = "%s:%s" % (ID, get_identifier(model_instance))
         
         try:
             raw_results = self.conn.more_like_this(query, field_name, **params)
@@ -273,7 +276,7 @@ class SearchBackend(BaseSearchBackend):
         indexed_models = site.get_indexed_models()
         
         for raw_result in raw_results.docs:
-            app_label, model_name = raw_result['django_ct'].split('.')
+            app_label, model_name = raw_result[DJANGO_CT].split('.')
             additional_fields = {}
             model = get_model(app_label, model_name)
             
@@ -287,14 +290,14 @@ class SearchBackend(BaseSearchBackend):
                     else:
                         additional_fields[string_key] = self.conn._to_python(value)
                 
-                del(additional_fields['django_ct'])
-                del(additional_fields['django_id'])
+                del(additional_fields[DJANGO_CT])
+                del(additional_fields[DJANGO_ID])
                 del(additional_fields['score'])
                 
-                if raw_result['id'] in getattr(raw_results, 'highlighting', {}):
-                    additional_fields['highlighted'] = raw_results.highlighting[raw_result['id']]
+                if raw_result[ID] in getattr(raw_results, 'highlighting', {}):
+                    additional_fields['highlighted'] = raw_results.highlighting[raw_result[ID]]
                 
-                result = SearchResult(app_label, model_name, raw_result['django_id'], raw_result['score'], **additional_fields)
+                result = SearchResult(app_label, model_name, raw_result[DJANGO_ID], raw_result['score'], **additional_fields)
                 results.append(result)
             else:
                 hits -= 1
@@ -325,18 +328,16 @@ class SearchBackend(BaseSearchBackend):
             # DRL_FIXME: Perhaps move to something where, if none of these
             #            checks succeed, call a custom method on the form that
             #            returns, per-backend, the right type of storage?
-            # DRL_FIXME: Also think about removing `isinstance` and replacing
-            #            it with a method call/string returned (like 'text' or
-            #            'date').
-            if isinstance(field_class, (DateField, DateTimeField)):
+            if field_class.field_type in ['date', 'datetime']:
                 field_data['type'] = 'date'
-            elif isinstance(field_class, IntegerField):
+            elif field_class.field_type == 'integer':
                 field_data['type'] = 'slong'
-            elif isinstance(field_class, FloatField):
+            elif field_class.field_type == 'float':
                 field_data['type'] = 'sfloat'
-            elif isinstance(field_class, BooleanField):
+            elif field_class.field_type == 'boolean':
                 field_data['type'] = 'boolean'
-            elif isinstance(field_class, MultiValueField):
+            
+            if field_class.is_multivalued:
                 field_data['multi_valued'] = 'true'
             
             if field_class.stored is False:
@@ -351,18 +352,13 @@ class SearchBackend(BaseSearchBackend):
                 if field_data['type'] == 'text':
                     field_data['type'] = 'string'
             
-            schema_fields.append(field_data)
-            
-            if field_class.faceted is True:
-                # Duplicate the field.
-                faceted_field = field_data.copy()
-                faceted_field['field_name'] = get_facet_field_name(faceted_field['field_name'])
-                
+            # If it's a ``FacetField``, make sure we don't postprocess it.
+            if hasattr(field_class, 'facet_for'):
                 # If it's text, it ought to be a string.
-                if faceted_field['type'] == 'text':
-                    faceted_field['type'] = 'string'
-                
-                schema_fields.append(faceted_field)
+                if field_data['type'] == 'text':
+                    field_data['type'] = 'string'
+            
+            schema_fields.append(field_data)
         
         return (content_field_name, schema_fields)
 
@@ -406,15 +402,19 @@ class SearchQuery(BaseSearchQuery):
                 'startswith': "%s:%s*",
             }
             
-            if filter_type != 'in':
-                result = filter_types[filter_type] % (index_fieldname, value)
-            else:
+            if filter_type == 'in':
                 in_options = []
                 
                 for possible_value in value:
                     in_options.append('%s:"%s"' % (index_fieldname, self.backend.conn._from_python(possible_value)))
                 
                 result = "(%s)" % " OR ".join(in_options)
+            elif filter_type == 'range':
+                start = self.backend.conn._from_python(value[0])
+                end = self.backend.conn._from_python(value[1])
+                return "%s:[%s TO %s]" % (index_fieldname, start, end)
+            else:
+                result = filter_types[filter_type] % (index_fieldname, value)
         
         return result
     
