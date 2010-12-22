@@ -119,7 +119,9 @@ for name, backend_settings in settings.HAYSTACK_SEARCH_ENGINES.items():
 # so outside callers won't be forced to update their code until they add a
 # backend:
 if len(settings.HAYSTACK_SEARCH_ENGINES) == 1:
-    backend = search_backends.values()[0]
+    # Eeeew, this needs a better fix than relying on our loop variable
+    # FIXME: Refactor out all remaining uses of haystack.backend
+    backend = backend_mod
 else:
     backend = load_backend("placeholder")
 
