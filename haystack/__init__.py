@@ -87,9 +87,20 @@ def load_backend(backend_name=None):
                 raise # If there's some other error, this must be an error in Django itself.
 
 if not hasattr(settings, "HAYSTACK_SEARCH_ENGINES"):
-    settings.HAYSTACK_SEARCH_ENGINES = {
-        "default": settings.HAYSTACK_SEARCH_ENGINE
-    }
+    # Generic settings:
+    migrated_settings = {'type': settings.HAYSTACK_SEARCH_ENGINE,
+        "include_spelling": getattr(settings, "HAYSTACK_INCLUDE_SPELLING",
+                                    False)}
+
+    if migrated_settings['type'] == "solr":
+        migrated_settings.update({
+            'url': settings.HAYSTACK_SOLR_URL,
+            'timeout': getattr(settings, "HAYSTACK_SOLR_TIMEOUT", 10)
+        })
+
+    # FIXME: Import other settings based on the search engine setting
+
+    settings.HAYSTACK_SEARCH_ENGINES = {"default": migrated_settings}
 
 for name, backend_settings in settings.HAYSTACK_SEARCH_ENGINES.items():
     # FIXME: Multi-backend support tested on something other than Solr
