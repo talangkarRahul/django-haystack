@@ -235,7 +235,7 @@ class SearchQuerySet(object):
     def query(self):
         if self._query is None:
             from haystack import get_search_backend
-            self._query = get_search_backend("default").get_query(site=self.site)
+            self._query = get_search_backend("default").get_query()
 
         return self._query
 
