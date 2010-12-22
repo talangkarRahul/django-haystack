@@ -30,6 +30,9 @@ class DummySearchResult(SearchResult):
 
 
 class SearchBackend(BaseSearchBackend):
+    def get_query(self):
+        return SearchQuery(site=self.site, backend=self)
+
     def update(self, indexer, iterable, commit=True):
         pass
     

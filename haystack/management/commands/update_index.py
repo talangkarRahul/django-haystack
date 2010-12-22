@@ -37,8 +37,12 @@ class Command(AppCommand):
             default=False, help='Remove objects from the index that are no longer present in the database.'
         ),
     )
-    option_list = AppCommand.option_list + base_options
-    
+    option_list = AppCommand.option_list + base_options + (
+        make_option('--backend', action='append', dest='backends', type='string',
+            help='The backend to operate on (may be used multiple times; default=all backends)'
+        ),
+    )
+
     # Django 1.0.X compatibility.
     verbosity_present = False
     
@@ -55,12 +59,19 @@ class Command(AppCommand):
         )
     
     def handle(self, *apps, **options):
+        from haystack import search_backends
+
         self.verbosity = int(options.get('verbosity', 1))
         self.batchsize = options.get('batchsize', DEFAULT_BATCH_SIZE)
         self.age = options.get('age', DEFAULT_AGE)
         self.site = options.get('site')
         self.remove = options.get('remove', False)
-        
+
+        if not options['backends']:
+            self.backend_names = search_backends.keys()
+        else:
+            self.backend_names = options['backends']
+
         if not apps:
             from django.db.models import get_app
             # Do all, in an INSTALLED_APPS sorted order.
@@ -96,76 +107,83 @@ class Command(AppCommand):
         
         for model in get_models(app):
             try:
-                index = site.get_index(model)
+                model_index = site.get_index(model)
             except NotRegistered:
                 if self.verbosity >= 2:
                     print "Skipping '%s' - no index." % model
                 continue
-                
+
             extra_lookup_kwargs = {}
-            updated_field = index.get_updated_field()
-            
+            updated_field = model_index.get_updated_field()
+
             if self.age:
                 if updated_field:
                     extra_lookup_kwargs['%s__gte' % updated_field] = datetime.datetime.now() - datetime.timedelta(hours=self.age)
                 else:
                     if self.verbosity >= 2:
                         print "No updated date field found for '%s' - not restricting by age." % model.__name__
-            
-            # `.select_related()` seems like a good idea here but can fail on
-            # nullable `ForeignKey` as well as what seems like other cases.
-            qs = index.get_queryset().filter(**extra_lookup_kwargs).order_by(model._meta.pk.name)
-            total = qs.count()
-            
-            if self.verbosity >= 1:
-                print "Indexing %d %s." % (total, smart_str(model._meta.verbose_name_plural))
-            
-            pks_seen = set()
-            
-            for start in range(0, total, self.batchsize):
-                end = min(start + self.batchsize, total)
-                
-                # Get a clone of the QuerySet so that the cache doesn't bloat up
-                # in memory. Useful when reindexing large amounts of data.
-                small_cache_qs = qs.all()
-                current_qs = small_cache_qs[start:end]
-                
-                for obj in current_qs:
-                    pks_seen.add(smart_str(obj.pk))
-                
-                if self.verbosity >= 2:
-                    print "  indexing %s - %d of %d." % (start+1, end, total)
-                
-                index.backend.update(index, current_qs)
-                
-                # Clear out the DB connections queries because it bloats up RAM.
-                reset_queries()
-            
-            if self.remove:
-                if self.age or total <= 0:
-                    # They're using a reduced set, which may not incorporate
-                    # all pks. Rebuild the list with everything.
-                    pks_seen = set()
-                    qs = index.get_queryset().values_list('pk', flat=True)
-                    total = qs.count()
-                    
-                    for pk in qs:
-                        pks_seen.add(smart_str(pk))
-                
+
+            for backend_name in self.backend_names:
+                if self.verbosity >= 1:
+                    print "Updating %s model for the %s backend" % (model.__name__, backend_name)
+
+                index = model_index.using(backend_name)
+
+                # `.select_related()` seems like a good idea here but can fail on
+                # nullable `ForeignKey` as well as what seems like other cases.
+                qs = index.get_queryset().filter(**extra_lookup_kwargs).order_by(model._meta.pk.name)
+                total = qs.count()
+
+                if self.verbosity >= 1:
+                    print "Indexing %d %s." % (total, smart_str(model._meta.verbose_name_plural))
+
+                pks_seen = set()
+
                 for start in range(0, total, self.batchsize):
-                    upper_bound = start + self.batchsize
-                    
-                    # Fetch a list of results.
-                    # Can't do pk range, because id's are strings (thanks comments
-                    # & UUIDs!).
-                    stuff_in_the_index = SearchQuerySet().models(model)[start:upper_bound]
-                    
-                    # Iterate over those results.
-                    for result in stuff_in_the_index:
-                        # Be careful not to hit the DB.
-                        if not smart_str(result.pk) in pks_seen:
-                            # The id is NOT in the small_cache_qs, issue a delete.
-                            if self.verbosity >= 2:
-                                print "  removing %s." % result.pk
-                            
-                            index.backend.remove(".".join([result.app_label, result.model_name, result.pk]))
+                    end = min(start + self.batchsize, total)
+
+                    # Get a clone of the QuerySet so that the cache doesn't bloat up
+                    # in memory. Useful when reindexing large amounts of data.
+                    small_cache_qs = qs.all()
+                    current_qs = small_cache_qs[start:end]
+
+                    for obj in current_qs:
+                        pks_seen.add(smart_str(obj.pk))
+
+                    if self.verbosity >= 2:
+                        print "  indexing %s - %d of %d." % (start+1, end, total)
+
+                    # TODO: This is inelegant: could we make index.update(current_qs) handle multiple backends correctly?
+                    index.backend.update(index, current_qs)
+
+                    # Clear out the DB connections queries because it bloats up RAM.
+                    reset_queries()
+
+                if self.remove:
+                    if self.age or total <= 0:
+                        # They're using a reduced set, which may not incorporate
+                        # all pks. Rebuild the list with everything.
+                        pks_seen = set()
+                        qs = index.get_queryset().values_list('pk', flat=True)
+                        total = qs.count()
+
+                        for pk in qs:
+                            pks_seen.add(smart_str(pk))
+
+                    for start in range(0, total, self.batchsize):
+                        upper_bound = start + self.batchsize
+
+                        # Fetch a list of results.
+                        # Can't do pk range, because id's are strings (thanks comments
+                        # & UUIDs!).
+                        stuff_in_the_index = SearchQuerySet().models(model)[start:upper_bound]
+
+                        # Iterate over those results.
+                        for result in stuff_in_the_index:
+                            # Be careful not to hit the DB.
+                            if not smart_str(result.pk) in pks_seen:
+                                # The id is NOT in the small_cache_qs, issue a delete.
+                                if self.verbosity >= 2:
+                                    print "  removing %s." % result.pk
+
+                                index.backend.remove(".".join([result.app_label, result.model_name, result.pk]))

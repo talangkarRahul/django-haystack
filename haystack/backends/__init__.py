@@ -77,7 +77,16 @@ class BaseSearchBackend(object):
         else:
             from haystack import site
             self.site = site
-    
+
+    def get_query(self):
+        """
+        Returns the default SearchQuery instance for this backend instance
+
+        This method MUST be implemented by each backend, as it will be highly
+        specific to each one.
+        """
+        raise NotImplementedError()
+
     def update(self, index, iterable):
         """
         Updates the backend when given a SearchIndex and a collection of

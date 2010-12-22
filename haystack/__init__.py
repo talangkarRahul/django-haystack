@@ -4,15 +4,17 @@ import os
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from haystack.sites import site
+
 try:
     from django.utils import importlib
 except ImportError:
     from haystack.utils import importlib
 
+from exceptions import SearchBackendError
 
 __author__ = 'Daniel Lindsley'
 __version__ = (1, 1, 1, 'beta')
-__all__ = ['backend']
+__all__ = ['backend', 'get_search_backend']
 
 
 # Setup default logging.
@@ -24,11 +26,16 @@ log.addHandler(stream)
 
 if not hasattr(settings, "HAYSTACK_SITECONF"):
     raise ImproperlyConfigured("You must define the HAYSTACK_SITECONF setting before using the search framework.")
-if not hasattr(settings, "HAYSTACK_SEARCH_ENGINE"):
-    raise ImproperlyConfigured("You must define the HAYSTACK_SEARCH_ENGINE setting before using the search framework.")
+
+# FIXME: Revise settings.py warnings for missing search config
+if not hasattr(settings, "HAYSTACK_SEARCH_ENGINE") and not hasattr(settings, "HAYSTACK_SEARCH_ENGINES"):
+    raise ImproperlyConfigured("You must define the HAYSTACK_SEARCH_ENGINES setting before using the search framework.")
 
 
-# Load the search backend.
+#: This will hold one or more SearchBackend _instances_, allowing
+#: SearchQuerySet.using() to select which one to use:
+search_backends = {}
+
 def load_backend(backend_name=None):
     """
     Loads a backend for interacting with the search engine.
@@ -79,9 +86,38 @@ def load_backend(backend_name=None):
             else:
                 raise # If there's some other error, this must be an error in Django itself.
 
+if not hasattr(settings, "HAYSTACK_SEARCH_ENGINES"):
+    settings.HAYSTACK_SEARCH_ENGINES = {
+        "default": settings.HAYSTACK_SEARCH_ENGINE
+    }
 
-backend = load_backend(settings.HAYSTACK_SEARCH_ENGINE)
+for name, backend_settings in settings.HAYSTACK_SEARCH_ENGINES.items():
+    # FIXME: Multi-backend support tested on something other than Solr
+    assert backend_settings['type'] == 'solr'
 
+    backend_mod = load_backend(backend_settings['type'])
+
+    # FIXME: Refactor backend settings to allow multiple instances with
+    #        different configuration:
+    settings.HAYSTACK_SOLR_URL = backend_settings['url']
+
+    search_backends[name] = backend_mod.SearchBackend()
+
+
+# For backwards compatibility, if there's only one backend we'll default to it
+# so outside callers won't be forced to update their code until they add a
+# backend:
+if len(settings.HAYSTACK_SEARCH_ENGINES) == 1:
+    backend = search_backends.values()[0]
+else:
+    backend = load_backend("placeholder")
+
+def get_search_backend(backend_name):
+    try:
+        return search_backends[backend_name]
+    except KeyError:
+        raise SearchBackendError(u"Unknown backend %s; available choices: %s" %
+                                    (backend_name, search_backends.keys()))
 
 def autodiscover():
     """

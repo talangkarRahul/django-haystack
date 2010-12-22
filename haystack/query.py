@@ -12,13 +12,13 @@ class SearchQuerySet(object):
     
     Supports chaining (a la QuerySet) to narrow the search.
     """
+
+    _query = None
+
     def __init__(self, site=None, query=None):
         if query is not None:
-            self.query = query
-        else:
-            from haystack import backend
-            self.query = backend.SearchQuery(site=site)
-        
+            self._query = query
+
         self._result_cache = []
         self._result_count = None
         self._cache_full = False
@@ -230,10 +230,27 @@ class SearchQuerySet(object):
             return self._result_cache[start:bound]
         else:
             return self._result_cache[start]
-    
-    
+
+    @property
+    def query(self):
+        if self._query is None:
+            from haystack import get_search_backend
+            self._query = get_search_backend("default").get_query(site=self.site)
+
+        return self._query
+
     # Methods that return a SearchQuerySet.
-    
+    def using(self, backend_name):
+        """Specify the search backend to use"""
+
+        from haystack import get_search_backend
+
+        clone = self._clone()
+
+        clone._query = get_search_backend(backend_name).get_query()
+
+        return clone
+
     def all(self):
         """Returns all results for the query."""
         return self._clone()
@@ -434,8 +451,12 @@ class SearchQuerySet(object):
     def _clone(self, klass=None):
         if klass is None:
             klass = self.__class__
-        
-        query = self.query._clone()
+
+        if self._query is None:
+            query = None
+        else:
+            query = self.query._clone()
+
         clone = klass(site=self.site, query=query)
         clone._load_all = self._load_all
         return clone

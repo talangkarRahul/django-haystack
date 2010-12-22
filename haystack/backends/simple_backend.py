@@ -28,6 +28,9 @@ if settings.DEBUG:
 
 
 class SearchBackend(BaseSearchBackend):
+    def get_query(self):
+        return SearchQuery(site=self.site, backend=self)
+
     def update(self, indexer, iterable, commit=True):
         if settings.DEBUG:
             logger.warning('update is not implemented in this backend')

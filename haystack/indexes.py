@@ -1,7 +1,9 @@
 import copy
 import sys
+
 from django.db.models import signals
 from django.utils.encoding import force_unicode
+
 from haystack.constants import ID, DJANGO_CT, DJANGO_ID
 from haystack.fields import *
 from haystack.utils import get_identifier, get_facet_field_name
@@ -74,16 +76,16 @@ class SearchIndex(object):
     
     """
     __metaclass__ = DeclarativeMetaclass
-    
+
+    # This with either be provided to the constructor or by calling .using():
+    _search_backend = None
+
     def __init__(self, model, backend=None):
         self.model = model
         
         if backend:
-            self.backend = backend
-        else:
-            import haystack
-            self.backend = haystack.backend.SearchBackend()
-        
+            self._search_backend = backend
+
         self.prepared_data = None
         content_fields = []
         
@@ -109,7 +111,21 @@ class SearchIndex(object):
     def _teardown_delete(self, model):
         """A hook for removing the behavior when the registered model is deleted."""
         pass
-    
+
+    @property
+    def backend(self):
+        # TODO: Refactor most uses of backend to be more clear about whether they refer to the module or a SearchBackend instance
+        if self._search_backend is None:
+            from haystack import get_search_backend
+            self._search_backend = get_search_backend("default")
+        return self._search_backend
+
+    def using(self, backend_name):
+        from haystack import get_search_backend
+
+        return self.__class__(model=self.model,
+                                backend=get_search_backend(backend_name))
+
     def get_queryset(self):
         """
         Get the default QuerySet to index when doing a full update.
@@ -310,10 +326,7 @@ class ModelSearchIndex(SearchIndex):
         
         if backend:
             self.backend = backend
-        else:
-            import haystack
-            self.backend = haystack.backend.SearchBackend()
-        
+
         self.prepared_data = None
         content_fields = []
         self.extra_field_kwargs = extra_field_kwargs or {}

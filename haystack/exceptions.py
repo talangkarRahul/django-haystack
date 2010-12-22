@@ -29,3 +29,8 @@ class MoreLikeThisError(HaystackError):
 class FacetingError(HaystackError):
     """Raised when incorrect arguments have been provided for faceting."""
     pass
+
+class UnspecifiedBackendError(HaystackError):
+    """Multiple backends are defined without either specifying the default
+    backend or selecting one for the current operation"""
+    pass

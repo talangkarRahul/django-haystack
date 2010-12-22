@@ -56,7 +56,10 @@ class SearchBackend(BaseSearchBackend):
         timeout = getattr(settings, 'HAYSTACK_SOLR_TIMEOUT', 10)
         self.conn = Solr(settings.HAYSTACK_SOLR_URL, timeout=timeout)
         self.log = logging.getLogger('haystack')
-    
+
+    def get_query(self):
+        return SearchQuery(site=self.site, backend=self)
+
     def update(self, index, iterable, commit=True):
         docs = []
         
