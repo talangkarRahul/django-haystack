@@ -300,7 +300,7 @@ class BaseSearchQuery(object):
         
         if backend is not None:
             self.backend = backend
-        elif self.site is not None:
+        elif self.site is not None and site.backend is not None:
             self.backend = site.backend
         else:
             self.backend = SearchBackend()
