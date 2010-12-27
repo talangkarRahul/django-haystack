@@ -276,6 +276,8 @@ class BaseSearchQuery(object):
     """
     
     def __init__(self, site=None, backend=None):
+        self.site = site
+
         self.query_filter = SearchNode()
         self.order_by = []
         self.models = set()
@@ -298,7 +300,7 @@ class BaseSearchQuery(object):
         
         if backend is not None:
             self.backend = backend
-        elif self.site:
+        elif self.site is not None:
             self.backend = site.backend
         else:
             self.backend = SearchBackend()
