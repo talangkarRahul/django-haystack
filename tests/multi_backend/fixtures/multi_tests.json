@@ -1,0 +1,20 @@
+[
+    {
+        "pk": 1,
+        "model": "multi_backend.Post",
+        "fields": {
+            "lang": "en",
+            "title": "Django at a glance",
+            "body": "Because Django was developed in a fast-paced newsroom environment, it was designed to make common Web-development tasks fast and easy. Here’s an informal overview of how to write a database-driven Web app with Django."
+        }
+    },
+    {
+        "pk": 2,
+        "model": "multi_backend.Post",
+        "fields": {
+            "lang": "es",
+            "title": "Django de un vistazo",
+            "body": "Debido a que Django fue desarrollado en un ambiente ágil de redacción, se diseñó para que las tareas comunes de desarrollo web fueran rápidas y simples. Lo que sigue es un vistazo a la forma de codificar una aplicación web con base de datos (database-driven Web app) usando Django."
+        }
+    }
+]

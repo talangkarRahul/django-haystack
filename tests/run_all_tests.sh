@@ -15,6 +15,10 @@ echo "** WHOOSH **"
 django-admin.py test $@ whoosh_tests --settings=whoosh_settings
 echo ""
 
+echo "** MULTI_BACKEND **"
+django-admin.py test $@ multi_backend --settings=multi_settings
+echo ""
+
 echo "** SITE REG **"
 django-admin.py test $@ site_registration --settings=site_registration_settings
 
