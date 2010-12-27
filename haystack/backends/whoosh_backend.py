@@ -78,7 +78,7 @@ class SearchBackend(BaseSearchBackend):
         if (storage or getattr(settings, 'HAYSTACK_WHOOSH_STORAGE', 'file')) != 'file':
             self.use_file_storage = False
         
-        self.path = getattr(settings, 'HAYSTACK_WHOOSH_PATH', path)
+        self.path = path or getattr(settings, 'HAYSTACK_WHOOSH_PATH', path)
         
         if self.use_file_storage and not self.path:
             raise ImproperlyConfigured('You must specify a HAYSTACK_WHOOSH_PATH in your settings.')
