@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.test import TestCase
-from haystack import site, indexes
+from haystack import site, indexes, __version__ as haystack_version
 from haystack.backends.solr_backend import SearchBackend, SearchQuery
 from haystack.management.commands.build_solr_schema import Command
 from haystack.query import SQ
@@ -28,9 +28,10 @@ class AlteredInternalNamesTestCase(TestCase):
         site.register(MockModel, MockModelSearchIndex)
         
         command = Command()
-        self.assertEqual(command.build_context().dicts[0], {
+        self.assertEqual(command.build_context('default').dicts[0], {
             'DJANGO_ID': 'my_django_id',
             'content_field_name': 'text',
+            'backend_settings': {'url': 'http://localhost:9001/solr/test_default', 'include_spelling': True, 'type': 'solr', 'timeout': 10},
             'fields': [
                 {
                     'indexed': 'true',
@@ -56,10 +57,12 @@ class AlteredInternalNamesTestCase(TestCase):
             ],
             'DJANGO_CT': 'my_django_ct',
             'default_operator': 'AND',
-            'ID': 'my_id'
+            'ID': 'my_id',
+            'backend_name': 'default',
+            'haystack_version': haystack_version
         })
         
-        schema_xml = command.build_template()
+        schema_xml = command.build_template('default')
         self.assertTrue('<uniqueKey>my_id</uniqueKey>' in schema_xml)
         self.assertTrue('<field name="my_id" type="string" indexed="true" stored="true" multiValued="false" required="true"/>' in schema_xml)
         self.assertTrue('<field name="my_django_ct" type="string" indexed="true" stored="true" multiValued="false" />' in schema_xml)
