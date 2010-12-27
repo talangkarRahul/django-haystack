@@ -14,6 +14,8 @@ class HaystackCommand(BaseCommand):
     #: dict of SearchBackend name & instance values which the command will use
     search_backends = {}
 
+    site = None
+
     def process_options(self, options):
         self.verbosity = int(options.get('verbosity', 1))
 
@@ -22,7 +24,7 @@ class HaystackCommand(BaseCommand):
 
         from haystack import get_search_backend, search_backends
 
-        if 'backends' in options:
+        if 'backends' not in options:
             self.search_backends = search_backends
         else:
             self.search_backends = dict((i, get_search_backend(i)) for i in
