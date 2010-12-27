@@ -1,9 +1,10 @@
 from optparse import make_option
 import sys
-from django.core.management.base import BaseCommand
+
+from haystack.management.commands import HaystackCommand
 
 
-class Command(BaseCommand):
+class Command(HaystackCommand):
     help = "Clears out the search index completely."
     base_options = (
         make_option('--noinput', action='store_false', dest='interactive', default=True,
@@ -11,18 +12,15 @@ class Command(BaseCommand):
         ),
     )
 
-    option_list = BaseCommand.option_list + base_options + (
-        make_option('--backend', action='append', dest='backends', type='string',
-            help='The backend to operate on (may be used multiple times; default=all backends)'
-        ),
-    )
+    option_list = HaystackCommand.option_list + base_options
 
     def handle(self, **options):
         """Clears out the search index completely."""
         # Cause the default site to load.
         from haystack import site
-        self.verbosity = int(options.get('verbosity', 1))
-        
+
+        self.process_options(options)
+
         if options.get('interactive', True):
             print
             print "WARNING: This will irreparably remove EVERYTHING from your search index."
@@ -38,14 +36,9 @@ class Command(BaseCommand):
         if self.verbosity >= 1:
             print "Removing all documents from your index because you said so."
 
-        from haystack import get_search_backend, search_backends
-
-        if not options['backends']:
-            search_backends = search_backends.values()
-        else:
-            search_backends = map(get_search_backend, options['backends'])
-
-        for sb in search_backends:
+        for name, sb in self.search_backends.items():
+            if self.verbosity >= 2:
+                print "Clearing %s backend..." % name
             sb.clear()
 
         if self.verbosity >= 1:

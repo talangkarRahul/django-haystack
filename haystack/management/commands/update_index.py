@@ -14,12 +14,14 @@ try:
 except NameError:
     from sets import Set as set
 
+from haystack.management.commands import HaystackCommand
+
 
 DEFAULT_BATCH_SIZE = getattr(settings, 'HAYSTACK_BATCH_SIZE', 1000)
 DEFAULT_AGE = None
 
 
-class Command(AppCommand):
+class Command(AppCommand, HaystackCommand):
     help = "Freshens the index for the given app(s)."
     base_options = (
         make_option('-a', '--age', action='store', dest='age',
@@ -37,11 +39,8 @@ class Command(AppCommand):
             default=False, help='Remove objects from the index that are no longer present in the database.'
         ),
     )
-    option_list = AppCommand.option_list + base_options + (
-        make_option('--backend', action='append', dest='backends', type='string',
-            help='The backend to operate on (may be used multiple times; default=all backends)'
-        ),
-    )
+
+    option_list = AppCommand.option_list + HaystackCommand.base_options + base_options
 
     # Django 1.0.X compatibility.
     verbosity_present = False
@@ -59,18 +58,11 @@ class Command(AppCommand):
         )
     
     def handle(self, *apps, **options):
-        from haystack import search_backends
+        self.process_options(options)
 
-        self.verbosity = int(options.get('verbosity', 1))
         self.batchsize = options.get('batchsize', DEFAULT_BATCH_SIZE)
         self.age = options.get('age', DEFAULT_AGE)
-        self.site = options.get('site')
         self.remove = options.get('remove', False)
-
-        if not options['backends']:
-            self.backend_names = search_backends.keys()
-        else:
-            self.backend_names = options['backends']
 
         if not apps:
             from django.db.models import get_app
@@ -123,7 +115,7 @@ class Command(AppCommand):
                     if self.verbosity >= 2:
                         print "No updated date field found for '%s' - not restricting by age." % model.__name__
 
-            for backend_name in self.backend_names:
+            for backend_name in self.search_backends.keys():
                 if self.verbosity >= 1:
                     print "Updating %s model for the %s backend" % (model.__name__, backend_name)
 
