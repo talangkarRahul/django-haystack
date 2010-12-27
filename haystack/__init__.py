@@ -103,16 +103,13 @@ if not hasattr(settings, "HAYSTACK_SEARCH_ENGINES"):
     settings.HAYSTACK_SEARCH_ENGINES = {"default": migrated_settings}
 
 for name, backend_settings in settings.HAYSTACK_SEARCH_ENGINES.items():
-    # FIXME: Multi-backend support tested on something other than Solr
-    assert backend_settings['type'] == 'solr'
+    settings_dict = backend_settings.copy()
 
-    backend_mod = load_backend(backend_settings['type'])
+    # We'll pop the type value to avoid every backend having to know and
+    # ignore it in __init__:
+    backend_mod = load_backend(settings_dict.pop('type'))
 
-    # FIXME: Refactor backend settings to allow multiple instances with
-    #        different configuration:
-    settings.HAYSTACK_SOLR_URL = backend_settings['url']
-
-    search_backends[name] = backend_mod.SearchBackend()
+    search_backends[name] = backend_mod.SearchBackend(**settings_dict)
 
 
 # For backwards compatibility, if there's only one backend we'll default to it

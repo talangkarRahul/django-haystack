@@ -71,12 +71,14 @@ class BaseSearchBackend(object):
     """
     Abstract search engine base class.
     """
-    def __init__(self, site=None):
+    def __init__(self, site=None, **kwargs):
         if site is not None:
             self.site = site
         else:
             from haystack import site
             self.site = site
+
+        self.include_spelling = kwargs.get("include_spelling", False)
 
     def get_query(self):
         """

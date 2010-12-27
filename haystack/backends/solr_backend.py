@@ -47,8 +47,8 @@ class SearchBackend(BaseSearchBackend):
         '[', ']', '^', '"', '~', '*', '?', ':',
     )
     
-    def __init__(self, site=None, url=None, timeout=None):
-        super(SearchBackend, self).__init__(site)
+    def __init__(self, site=None, url=None, timeout=None, **kwargs):
+        super(SearchBackend, self).__init__(site, **kwargs)
         
         url = getattr(settings, 'HAYSTACK_SOLR_URL', url)
         if not url:
@@ -140,7 +140,7 @@ class SearchBackend(BaseSearchBackend):
             kwargs['hl'] = 'true'
             kwargs['hl.fragsize'] = '200'
         
-        if getattr(settings, 'HAYSTACK_INCLUDE_SPELLING', False) is True:
+        if self.include_spelling is True:
             kwargs['spellcheck'] = 'true'
             kwargs['spellcheck.collate'] = 'true'
             kwargs['spellcheck.count'] = 1
@@ -270,7 +270,7 @@ class SearchBackend(BaseSearchBackend):
                     # pairs.
                     facets[key][facet_field] = zip(facets[key][facet_field][::2], facets[key][facet_field][1::2])
         
-        if getattr(settings, 'HAYSTACK_INCLUDE_SPELLING', False) is True:
+        if self.include_spelling is True:
             if hasattr(raw_results, 'spellcheck'):
                 if len(raw_results.spellcheck.get('suggestions', [])):
                     # For some reason, it's an array of pairs. Pull off the

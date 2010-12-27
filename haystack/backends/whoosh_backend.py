@@ -69,8 +69,8 @@ class SearchBackend(BaseSearchBackend):
         '[', ']', '^', '"', '~', '*', '?', ':', '.',
     )
     
-    def __init__(self, site=None, post_limit=None, storage=None, path=None):
-        super(SearchBackend, self).__init__(site)
+    def __init__(self, site=None, post_limit=None, storage=None, path=None, **kwargs):
+        super(SearchBackend, self).__init__(site, **kwargs)
         self.setup_complete = False
         self.use_file_storage = True
         self.post_limit = post_limit or getattr(settings, 'HAYSTACK_WHOOSH_POST_LIMIT', 128 * 1024 * 1024)
@@ -183,7 +183,7 @@ class SearchBackend(BaseSearchBackend):
             writer.commit()
             
             # If spelling support is desired, add to the dictionary.
-            if getattr(settings, 'HAYSTACK_INCLUDE_SPELLING', False) is True:
+            if self.include_spelling is True:
                 sp = SpellChecker(self.storage)
                 sp.add_field(self.index, self.content_field_name)
     
@@ -382,7 +382,7 @@ class SearchBackend(BaseSearchBackend):
             
             return results
         else:
-            if getattr(settings, 'HAYSTACK_INCLUDE_SPELLING', False):
+            if self.include_spelling:
                 if spelling_query:
                     spelling_suggestion = self.create_spelling_suggestion(spelling_query)
                 else:
@@ -458,7 +458,7 @@ class SearchBackend(BaseSearchBackend):
             else:
                 hits -= 1
         
-        if getattr(settings, 'HAYSTACK_INCLUDE_SPELLING', False):
+        if self.include_spelling:
             if spelling_query:
                 spelling_suggestion = self.create_spelling_suggestion(spelling_query)
             else:
