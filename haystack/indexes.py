@@ -325,7 +325,7 @@ class ModelSearchIndex(SearchIndex):
         self.model = model
         
         if backend:
-            self.backend = backend
+            self._search_backend = backend
 
         self.prepared_data = None
         content_fields = []
