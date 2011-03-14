@@ -236,6 +236,20 @@ Example::
 
     SearchQuerySet().filter(content='foo').models(BlogEntry, Comment)
 
+``result_class``
+~~~~~~~~~~~~~~~~
+
+.. method:: SearchQuerySet.result_class(self, klass)
+
+Allows specifying a different class to use for results.
+
+Overrides any previous usages. If ``None`` is provided, Haystack will
+revert back to the default ``SearchResult`` object.
+
+Example::
+
+    SearchQuerySet().result_class(CustomResult)
+
 ``boost``
 ~~~~~~~~~
 
@@ -417,6 +431,18 @@ Example::
     SearchQuerySet().filter(content='old one eye').filter(content='goldfish').exclude(content='tank')
 
 This method is somewhat naive but works well enough for simple, common cases.
+
+``autocomplete``
+~~~~~~~~~~~~~~~~
+
+A shortcut method to perform an autocomplete search.
+
+Must be run against fields that are either ``NgramField`` or
+``EdgeNgramField``.
+
+Example::
+
+    SearchQuerySet().autocomplete(title_autocomplete='gol')
 
 ``more_like_this``
 ~~~~~~~~~~~~~~~~~~

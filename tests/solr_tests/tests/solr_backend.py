@@ -5,12 +5,13 @@ import pysolr
 from django.conf import settings
 from django.test import TestCase
 from haystack import backends
-from haystack.indexes import *
+from haystack import indexes
 from haystack.backends.solr_backend import SearchBackend, SearchQuery
-from haystack.exceptions import HaystackError
+from haystack.models import SearchResult
 from haystack.query import SearchQuerySet, RelatedSearchQuerySet, SQ
 from haystack.sites import SearchSite
 from core.models import MockModel, AnotherMockModel, AFourthMockModel
+from core.tests.mocks import MockSearchResult
 try:
     set
 except NameError:
@@ -34,56 +35,56 @@ def clear_solr_index():
     raw_solr.delete(q='*:*')
 
 
-class SolrMockSearchIndex(SearchIndex):
-    text = CharField(document=True, use_template=True)
-    name = CharField(model_attr='author', faceted=True)
-    pub_date = DateField(model_attr='pub_date')
+class SolrMockSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True, use_template=True)
+    name = indexes.CharField(model_attr='author', faceted=True)
+    pub_date = indexes.DateField(model_attr='pub_date')
 
 
-class SolrMaintainTypeMockSearchIndex(SearchIndex):
-    text = CharField(document=True, use_template=True)
-    month = CharField(indexed=False)
-    pub_date = DateField(model_attr='pub_date')
+class SolrMaintainTypeMockSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True, use_template=True)
+    month = indexes.CharField(indexed=False)
+    pub_date = indexes.DateField(model_attr='pub_date')
     
     def prepare_month(self, obj):
         return "%02d" % obj.pub_date.month
 
 
-class SolrMockModelSearchIndex(SearchIndex):
-    text = CharField(model_attr='foo', document=True)
-    name = CharField(model_attr='author')
-    pub_date = DateField(model_attr='pub_date')
+class SolrMockModelSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(model_attr='foo', document=True)
+    name = indexes.CharField(model_attr='author')
+    pub_date = indexes.DateField(model_attr='pub_date')
 
 
-class SolrAnotherMockModelSearchIndex(SearchIndex):
-    text = CharField(document=True)
-    name = CharField(model_attr='author')
-    pub_date = DateField(model_attr='pub_date')
+class SolrAnotherMockModelSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True)
+    name = indexes.CharField(model_attr='author')
+    pub_date = indexes.DateField(model_attr='pub_date')
     
     def prepare_text(self, obj):
         return u"You might be searching for the user %s" % obj.author
 
 
-class SolrBoostMockSearchIndex(SearchIndex):
-    text = CharField(
+class SolrBoostMockSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(
         document=True, use_template=True,
         template_name='search/indexes/core/mockmodel_template.txt'
     )
-    author = CharField(model_attr='author', weight=2.0)
-    editor = CharField(model_attr='editor')
-    pub_date = DateField(model_attr='pub_date')
+    author = indexes.CharField(model_attr='author', weight=2.0)
+    editor = indexes.CharField(model_attr='editor')
+    pub_date = indexes.DateField(model_attr='pub_date')
 
 
-class SolrRoundTripSearchIndex(SearchIndex):
-    text = CharField(document=True, default='')
-    name = CharField()
-    is_active = BooleanField()
-    post_count = IntegerField()
-    average_rating = FloatField()
-    pub_date = DateField()
-    created = DateTimeField()
-    tags = MultiValueField()
-    sites = MultiValueField()
+class SolrRoundTripSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True, default='')
+    name = indexes.CharField()
+    is_active = indexes.BooleanField()
+    post_count = indexes.IntegerField()
+    average_rating = indexes.FloatField()
+    pub_date = indexes.DateField()
+    created = indexes.DateTimeField()
+    tags = indexes.MultiValueField()
+    sites = indexes.MultiValueField()
     
     def prepare(self, obj):
         prepped = super(SolrRoundTripSearchIndex, self).prepare(obj)
@@ -101,16 +102,24 @@ class SolrRoundTripSearchIndex(SearchIndex):
         return prepped
 
 
-class SolrComplexFacetsMockSearchIndex(SearchIndex):
-    text = CharField(document=True, default='')
-    name = CharField(faceted=True)
-    is_active = BooleanField(faceted=True)
-    post_count = IntegerField()
-    post_count_i = FacetIntegerField(facet_for='post_count')
-    average_rating = FloatField(faceted=True)
-    pub_date = DateField(faceted=True)
-    created = DateTimeField(faceted=True)
-    sites = MultiValueField(faceted=True)
+class SolrComplexFacetsMockSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True, default='')
+    name = indexes.CharField(faceted=True)
+    is_active = indexes.BooleanField(faceted=True)
+    post_count = indexes.IntegerField()
+    post_count_i = indexes.FacetIntegerField(facet_for='post_count')
+    average_rating = indexes.FloatField(faceted=True)
+    pub_date = indexes.DateField(faceted=True)
+    created = indexes.DateTimeField(faceted=True)
+    sites = indexes.MultiValueField(faceted=True)
+
+
+class SolrAutocompleteMockModelSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(model_attr='foo', document=True)
+    name = indexes.CharField(model_attr='author')
+    pub_date = indexes.DateField(model_attr='pub_date')
+    text_auto = indexes.EdgeNgramField(model_attr='foo')
+    name_auto = indexes.EdgeNgramField(model_attr='author')
 
 
 class SolrSearchBackendTestCase(TestCase):
@@ -265,6 +274,9 @@ class SolrSearchBackendTestCase(TestCase):
         self.assertEqual(self.sb.search('', narrow_queries=set(['name:daniel1'])), {'hits': 0, 'results': []})
         results = self.sb.search('Index', narrow_queries=set(['name:daniel1']))
         self.assertEqual(results['hits'], 1)
+        
+        # Ensure that swapping the ``result_class`` works.
+        self.assertTrue(isinstance(self.sb.search(u'index document', result_class=MockSearchResult)['results'][0], MockSearchResult))
         
         # Check the use of ``limit_to_registered_models``.
         self.assertEqual(self.sb.search('', limit_to_registered_models=False), {'hits': 0, 'results': []})
@@ -877,6 +889,19 @@ class LiveSolrSearchQuerySetTestCase(TestCase):
         sqs = self.sqs.auto_query('mel "blazing saddles" "brooks')
         self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel AND \\"brooks)')
         self.assertEqual(sqs.count(), 0)
+    
+    def test_result_class(self):
+        # Assert that we're defaulting to ``SearchResult``.
+        sqs = self.sqs.all()
+        self.assertTrue(isinstance(sqs[0], SearchResult))
+        
+        # Custom class.
+        sqs = self.sqs.result_class(MockSearchResult).all()
+        self.assertTrue(isinstance(sqs[0], MockSearchResult))
+        
+        # Reset to default.
+        sqs = self.sqs.result_class(None).all()
+        self.assertTrue(isinstance(sqs[0], SearchResult))
 
 
 class LiveSolrMoreLikeThisTestCase(TestCase):
@@ -935,6 +960,69 @@ class LiveSolrMoreLikeThisTestCase(TestCase):
             self.assertEqual(deferred.count(), 0)
             self.assertEqual([result.pk for result in deferred], [])
             self.assertEqual(len([result.pk for result in deferred]), 0)
+        
+        # Ensure that swapping the ``result_class`` works.
+        self.assertTrue(isinstance(self.sqs.result_class(MockSearchResult).more_like_this(MockModel.objects.get(pk=1))[0], MockSearchResult))
+
+
+
+class LiveSolrAutocompleteTestCase(TestCase):
+    fixtures = ['bulk_data.json']
+    
+    def setUp(self):
+        super(LiveSolrAutocompleteTestCase, self).setUp()
+        
+        # Wipe it clean.
+        clear_solr_index()
+        
+        # With the models registered, you get the proper bits.
+        import haystack
+        from haystack.sites import SearchSite
+        
+        # Stow.
+        self.old_site = haystack.site
+        test_site = SearchSite()
+        test_site.register(MockModel, SolrAutocompleteMockModelSearchIndex)
+        haystack.site = test_site
+        
+        self.sqs = SearchQuerySet()
+        
+        test_site.get_index(MockModel).update()
+    
+    def tearDown(self):
+        # Restore.
+        import haystack
+        haystack.site = self.old_site
+        super(LiveSolrAutocompleteTestCase, self).tearDown()
+    
+    def test_autocomplete(self):
+        autocomplete = self.sqs.autocomplete(text_auto='mod')
+        self.assertEqual(autocomplete.count(), 5)
+        self.assertEqual([result.pk for result in autocomplete], ['1', '12', '6', '7', '14'])
+        self.assertTrue('mod' in autocomplete[0].text.lower())
+        self.assertTrue('mod' in autocomplete[1].text.lower())
+        self.assertTrue('mod' in autocomplete[2].text.lower())
+        self.assertTrue('mod' in autocomplete[3].text.lower())
+        self.assertTrue('mod' in autocomplete[4].text.lower())
+        self.assertEqual(len([result.pk for result in autocomplete]), 5)
+        
+        # Test multiple words.
+        autocomplete_2 = self.sqs.autocomplete(text_auto='your mod')
+        self.assertEqual(autocomplete_2.count(), 3)
+        self.assertEqual([result.pk for result in autocomplete_2], ['1', '14', '6'])
+        self.assertTrue('your' in autocomplete_2[0].text.lower())
+        self.assertTrue('mod' in autocomplete_2[0].text.lower())
+        self.assertTrue('your' in autocomplete_2[1].text.lower())
+        self.assertTrue('mod' in autocomplete_2[1].text.lower())
+        self.assertTrue('your' in autocomplete_2[2].text.lower())
+        self.assertTrue('mod' in autocomplete_2[2].text.lower())
+        self.assertEqual(len([result.pk for result in autocomplete_2]), 3)
+        
+        # Test multiple fields.
+        autocomplete_3 = self.sqs.autocomplete(text_auto='Django', name_auto='dan')
+        self.assertEqual(autocomplete_3.count(), 4)
+        self.assertEqual([result.pk for result in autocomplete_3], ['12', '1', '14', '22'])
+        self.assertEqual(len([result.pk for result in autocomplete_3]), 4)
 
 
 class LiveSolrRoundTripTestCase(TestCase):

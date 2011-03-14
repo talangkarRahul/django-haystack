@@ -1,47 +1,57 @@
 from datetime import timedelta
 import os
 import shutil
-from whoosh.fields import TEXT, ID, KEYWORD, NUMERIC, DATETIME
+from whoosh.fields import TEXT, KEYWORD, NUMERIC, DATETIME
 from whoosh.qparser import QueryParser
 from django.conf import settings
 from django.utils.datetime_safe import datetime, date
 from django.test import TestCase
 from haystack import backends
-from haystack.indexes import *
+from haystack import indexes
 from haystack.backends.whoosh_backend import SearchBackend, SearchQuery
+from haystack.models import SearchResult
 from haystack.query import SearchQuerySet, SQ
 from haystack.sites import SearchSite
 from core.models import MockModel, AnotherMockModel
+from core.tests.mocks import MockSearchResult
 try:
     set
 except NameError:
     from sets import Set as set
 
 
-class WhooshMockSearchIndex(SearchIndex):
-    text = CharField(document=True, use_template=True)
-    name = CharField(model_attr='author')
-    pub_date = DateField(model_attr='pub_date')
+class WhooshMockSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True, use_template=True)
+    name = indexes.CharField(model_attr='author')
+    pub_date = indexes.DateField(model_attr='pub_date')
 
 
-class AllTypesWhooshMockSearchIndex(SearchIndex):
-    text = CharField(document=True, use_template=True)
-    name = CharField(model_attr='author', indexed=False)
-    pub_date = DateField(model_attr='pub_date')
-    sites = MultiValueField()
-    seen_count = IntegerField(indexed=False)
+class AllTypesWhooshMockSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True, use_template=True)
+    name = indexes.CharField(model_attr='author', indexed=False)
+    pub_date = indexes.DateField(model_attr='pub_date')
+    sites = indexes.MultiValueField()
+    seen_count = indexes.IntegerField(indexed=False)
 
 
-class WhooshMaintainTypeMockSearchIndex(SearchIndex):
-    text = CharField(document=True)
-    month = CharField(indexed=False)
-    pub_date = DateField(model_attr='pub_date')
+class WhooshMaintainTypeMockSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True)
+    month = indexes.CharField(indexed=False)
+    pub_date = indexes.DateField(model_attr='pub_date')
     
     def prepare_text(self, obj):
         return "Indexed!\n%s" % obj.pk
     
     def prepare_month(self, obj):
         return "%02d" % obj.pub_date.month
+
+
+class WhooshAutocompleteMockModelSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(model_attr='foo', document=True)
+    name = indexes.CharField(model_attr='author')
+    pub_date = indexes.DateField(model_attr='pub_date')
+    text_auto = indexes.EdgeNgramField(model_attr='foo')
+    name_auto = indexes.EdgeNgramField(model_attr='author')
 
 
 class WhooshSearchBackendTestCase(TestCase):
@@ -176,6 +186,9 @@ class WhooshSearchBackendTestCase(TestCase):
         # results = self.sb.search('Index*', narrow_queries=set(['name:daniel1']))
         # self.assertEqual(results['hits'], 1)
         
+        # Ensure that swapping the ``result_class`` works.
+        self.assertTrue(isinstance(self.sb.search(u'Index*', result_class=MockSearchResult)['results'][0], MockSearchResult))
+        
         # Check the use of ``limit_to_registered_models``.
         self.assertEqual(self.sb.search(u'', limit_to_registered_models=False), {'hits': 0, 'results': []})
         self.assertEqual(self.sb.search(u'*', limit_to_registered_models=False)['hits'], 23)
@@ -198,6 +211,12 @@ class WhooshSearchBackendTestCase(TestCase):
         
         # Unsupported by Whoosh. Should see empty results.
         self.assertEqual(self.sb.more_like_this(self.sample_objs[0])['hits'], 0)
+        
+        # Make sure that swapping the ``result_class`` doesn't blow up.
+        try:
+            self.sb.search(u'index document', result_class=MockSearchResult)
+        except:
+            self.fail()
     
     def test_delete_index(self):
         self.sb.update(self.smmi, self.sample_objs)
@@ -599,20 +618,91 @@ class LiveWhooshSearchQuerySetTestCase(TestCase):
         self.assertEqual(len(results), 49)
         self.assertEqual(results._cache_is_full(), False)
         self.assertEqual(len(backends.queries), 1)
+    
+    def test_result_class(self):
+        self.sb.update(self.smmi, self.sample_objs)
+        
+        # Assert that we're defaulting to ``SearchResult``.
+        sqs = self.sqs.all()
+        self.assertTrue(isinstance(sqs[0], SearchResult))
+        
+        # Custom class.
+        sqs = self.sqs.result_class(MockSearchResult).all()
+        self.assertTrue(isinstance(sqs[0], MockSearchResult))
+        
+        # Reset to default.
+        sqs = self.sqs.result_class(None).all()
+        self.assertTrue(isinstance(sqs[0], SearchResult))
 
 
-class WhooshRoundTripSearchIndex(SearchIndex):
-    text = CharField(document=True, default='')
-    name = CharField()
-    is_active = BooleanField()
-    post_count = IntegerField()
-    average_rating = FloatField()
-    pub_date = DateField()
-    created = DateTimeField()
-    tags = MultiValueField()
-    sites = MultiValueField()
+class LiveWhooshAutocompleteTestCase(TestCase):
+    fixtures = ['bulk_data.json']
+    
+    def setUp(self):
+        super(LiveWhooshAutocompleteTestCase, self).setUp()
+        
+        # Stow.
+        temp_path = os.path.join('tmp', 'test_whoosh_query')
+        self.old_whoosh_path = getattr(settings, 'HAYSTACK_WHOOSH_PATH', temp_path)
+        settings.HAYSTACK_WHOOSH_PATH = temp_path
+        
+        self.site = SearchSite()
+        self.sb = SearchBackend(site=self.site)
+        self.wacsi = WhooshAutocompleteMockModelSearchIndex(MockModel, backend=self.sb)
+        self.site.register(MockModel, WhooshAutocompleteMockModelSearchIndex)
+        
+        # Stow.
+        import haystack
+        self.old_debug = settings.DEBUG
+        settings.DEBUG = True
+        self.old_site = haystack.site
+        haystack.site = self.site
+        
+        self.sb.setup()
+        self.sqs = SearchQuerySet(site=self.site)
+        
+        # Wipe it clean.
+        self.sqs.query.backend.clear()
+        
+        for mock in MockModel.objects.all():
+            self.wacsi.update_object(mock)
+    
+    def tearDown(self):
+        if os.path.exists(settings.HAYSTACK_WHOOSH_PATH):
+            shutil.rmtree(settings.HAYSTACK_WHOOSH_PATH)
+        
+        settings.HAYSTACK_WHOOSH_PATH = self.old_whoosh_path
+        
+        import haystack
+        haystack.site = self.old_site
+        settings.DEBUG = self.old_debug
+        
+        super(LiveWhooshAutocompleteTestCase, self).tearDown()
+    
+    def test_autocomplete(self):
+        autocomplete = self.sqs.autocomplete(text_auto='mod')
+        self.assertEqual(autocomplete.count(), 5)
+        self.assertEqual([result.pk for result in autocomplete], [u'1', u'12', u'14', u'7', u'6'])
+        self.assertTrue('mod' in autocomplete[0].text.lower())
+        self.assertTrue('mod' in autocomplete[1].text.lower())
+        self.assertTrue('mod' in autocomplete[2].text.lower())
+        self.assertTrue('mod' in autocomplete[3].text.lower())
+        self.assertTrue('mod' in autocomplete[4].text.lower())
+        self.assertEqual(len([result.pk for result in autocomplete]), 5)
+
+
+class WhooshRoundTripSearchIndex(indexes.SearchIndex):
+    text = indexes.CharField(document=True, default='')
+    name = indexes.CharField()
+    is_active = indexes.BooleanField()
+    post_count = indexes.IntegerField()
+    average_rating = indexes.FloatField()
+    pub_date = indexes.DateField()
+    created = indexes.DateTimeField()
+    tags = indexes.MultiValueField()
+    sites = indexes.MultiValueField()
     # For a regression involving lists with nothing in them.
-    empty_list = MultiValueField()
+    empty_list = indexes.MultiValueField()
     
     def prepare(self, obj):
         prepped = super(WhooshRoundTripSearchIndex, self).prepare(obj)
