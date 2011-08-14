@@ -11,7 +11,7 @@ one to prepare the data and one to implement the actual search.
 Step 1. Setup The Data
 ======================
 
-To do autocomplete effectively, the search backend uses n-grams (essential
+To do autocomplete effectively, the search backend uses n-grams (essentially
 a small window passed over the string). Because this alters the way your
 data needs to be stored, the best approach is to add a new field to your
 ``SearchIndex`` that contains the text you want to autocomplete on.
@@ -29,23 +29,22 @@ Example (continuing from the tutorial)::
 
     import datetime
     from haystack import indexes
-    from haystack import site
     from myapp.models import Note
     
     
-    class NoteIndex(indexes.SearchIndex):
+    class NoteIndex(indexes.SearchIndex, indexes.Indexable):
         text = indexes.CharField(document=True, use_template=True)
         author = indexes.CharField(model_attr='user')
         pub_date = indexes.DateTimeField(model_attr='pub_date')
         # We add this for autocomplete.
         content_auto = indexes.EdgeNgramField(model_attr='content')
         
-        def get_queryset(self):
+        def get_model(self):
+            return Note
+        
+        def index_queryset(self):
             """Used when the entire index for model is updated."""
             return Note.objects.filter(pub_date__lte=datetime.datetime.now())
-    
-    
-    site.register(Note, NoteIndex)
 
 As with all schema changes, you'll need to rebuild/update your index after
 making this change.

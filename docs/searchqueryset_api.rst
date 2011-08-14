@@ -4,7 +4,7 @@
 ``SearchQuerySet`` API
 ======================
 
-.. class:: SearchQuerySet(site=None, query=None)
+.. class:: SearchQuerySet(using=None, query=None)
 
 The ``SearchQuerySet`` class is designed to make performing a search and
 iterating over its results easy and consistent. For those familiar with Django's
@@ -66,7 +66,7 @@ search the main documents.
 For example::
 
     from haystack.query import SearchQuerySet
-    
+
     # This searches whatever fields were marked ``document=True``.
     results = SearchQuerySet().exclude(content='hello')
 
@@ -118,9 +118,6 @@ The lookup parameters (``**kwargs``) should follow the `Field lookups`_ below.
 If you specify more than one pair, they will be joined in the query according to
 the ``HAYSTACK_DEFAULT_OPERATOR`` setting (defaults to ``AND``).
 
-If a string with one or more spaces in it is specified as the value, an exact
-match will be performed on that phrase.
-
 .. warning::
 
     Any data you pass to ``filter`` is passed along **unescaped**. If
@@ -128,15 +125,23 @@ match will be performed on that phrase.
     ``auto_query`` or use the ``clean`` method on your ``SearchQuery`` to
     sanitize the data.
 
+..warning::
+
+    If a string with one or more spaces in it is specified as the value, the
+    string will get passed along **AS IS**. This will mean that it will **NOT**
+    be treated as a phrase (like Haystack 1.X's behavior).
+
+    If you want to match a phrase, you should use the ``__exact`` filter type.
+
 Example::
 
     SearchQuerySet().filter(content='foo')
-    
+
     SearchQuerySet().filter(content='foo', pub_date__lte=datetime.date(2008, 1, 1))
-    
+
     # Identical to the previous example.
     SearchQuerySet().filter(content='foo').filter(pub_date__lte=datetime.date(2008, 1, 1))
-    
+
     # To escape user data:
     sqs = SearchQuerySet()
     sqs = sqs.filter(title=sqs.query.clean(user_query))
@@ -199,18 +204,10 @@ string with a ``-``::
     reconcile differences between characters from different languages. This
     means that accented characters will sort closely with the same character
     and **NOT** necessarily close to the unaccented form of the character.
-    
+
     If you want this kind of behavior, you should override the ``prepare_FOO``
     methods on your ``SearchIndex`` objects to transliterate the characters
     as you see fit.
-
-.. warning::
-
-    **Whoosh only** If you're planning on ordering by an ``IntegerField`` using
-    Whoosh, you'll need to adequately zero-pad your numbers in the
-    ``prepare_FOO`` method. This is because Whoosh uses UTF-8 string for
-    everything, and from the schema, there is no way to know how a field should
-    be treated.
 
 ``highlight``
 ~~~~~~~~~~~~~
@@ -335,7 +332,7 @@ Example::
 
     # Search, from recipes containing 'blend', for recipes containing 'banana'.
     SearchQuerySet().narrow('blend').filter(content='banana')
-    
+
     # Using a fielded search where the recipe's title contains 'smoothie', find all recipes published before 2009.
     SearchQuerySet().narrow('title:smoothie').filter(pub_date__lte=datetime.datetime(2009, 1, 1))
 
@@ -411,7 +408,7 @@ Please see the docs on ``RelatedSearchQuerySet``.
 ``auto_query``
 ~~~~~~~~~~~~~~
 
-.. method:: SearchQuerySet.auto_query(self, query_string)
+.. method:: SearchQuerySet.auto_query(self, query_string, fieldname=None)
 
 Performs a best guess constructing the search query.
 
@@ -423,12 +420,21 @@ It handles exact matches (specified with single or double quotes), negation (
 using a ``-`` immediately before the term) and joining remaining terms with the
 operator specified in ``HAYSTACK_DEFAULT_OPERATOR``.
 
+If a ``fieldname`` is provided, the ``auto_query`` will be applied to that
+field instead of the default ``content`` field.
+
 Example::
 
     SearchQuerySet().auto_query('goldfish "old one eye" -tank')
-    
+
     # ... is identical to...
-    SearchQuerySet().filter(content='old one eye').filter(content='goldfish').exclude(content='tank')
+    SearchQuerySet().filter(content__exact='old one eye').filter(content='goldfish').exclude(content='tank')
+
+    # Against a different field.
+    SearchQuerySet().auto_query('goldfish -tank', fieldname='title')
+
+    # ... is identical to...
+    SearchQuerySet().filter(title='goldfish').exclude(title='tank')
 
 This method is somewhat naive but works well enough for simple, common cases.
 
@@ -465,11 +471,26 @@ Example::
     mlt = SearchQuerySet().more_like_this(entry)
     mlt.count() # 5
     mlt[0].object.title # "Haystack Beta 1 Released"
-    
+
     # ...or...
     mlt = SearchQuerySet().filter(public=True).exclude(pub_date__lte=datetime.date(2009, 7, 21)).more_like_this(entry)
     mlt.count() # 2
     mlt[0].object.title # "Haystack Beta 1 Released"
+
+``using``
+~~~~~~~~~
+
+.. method:: SearchQuerySet.using(self, connection_name)
+
+Allows switching which connection the ``SearchQuerySet`` uses to search in.
+
+Example::
+
+    # Let the routers decide which connection to use.
+    sqs = SearchQuerySet().all()
+
+    # Specify the 'default'.
+    sqs = SearchQuerySet().all().using('default')
 
 
 Methods That Do Not Return A ``SearchQuerySet``
@@ -501,7 +522,7 @@ a ``SearchResult`` object that is the best match the search backend found::
 
     foo = SearchQuerySet().filter(content='foo').best_match()
     foo.id # Something like 5.
-    
+
     # Identical to:
     foo = SearchQuerySet().filter(content='foo')[0]
 
@@ -518,7 +539,7 @@ found::
 
     foo = SearchQuerySet().filter(content='foo').latest('pub_date')
     foo.id # Something like 3.
-    
+
     # Identical to:
     foo = SearchQuerySet().filter(content='foo').order_by('-pub_date')[0]
 
@@ -545,7 +566,7 @@ Example::
 
     # Count document hits for each author.
     sqs = SearchQuerySet().filter(content='foo').facet('author')
-    
+
     sqs.facet_counts()
     # Gives the following response:
     # {
@@ -568,8 +589,8 @@ Example::
 
 Returns the spelling suggestion found by the query.
 
-To work, you must set ``settings.HAYSTACK_INCLUDE_SPELLING`` (see
-:doc:`settings`) to ``True``. Otherwise, ``None`` will be returned.
+To work, you must set ``INCLUDE_SPELLING`` within your connection's
+settings dictionary to ``True``. Otherwise, ``None`` will be returned.
 
 This method causes the query to evaluate and run the search if it hasn't already
 run. Search results will be populated as normal but with an additional spelling
@@ -585,7 +606,7 @@ Example::
 
     sqs = SearchQuerySet().auto_query('mor exmples')
     sqs.spelling_suggestion() # u'more examples'
-    
+
     # ...or...
     suggestion = SearchQuerySet().spelling_suggestion('moar exmples')
     suggestion # u'more examples'
@@ -598,6 +619,7 @@ Field Lookups
 
 The following lookup types are supported:
 
+* contains
 * exact
 * gt
 * gte
@@ -616,17 +638,24 @@ The actual behavior of these lookups is backend-specific.
     parses data, especially in regards to stemming (see :doc:`glossary`). This
     can mean that if the query ends in a vowel or a plural form, it may get
     stemmed before being evaluated.
-    
+
     This is both backend-specific and yet fairly consistent between engines,
     and may be the cause of sometimes unexpected results.
+
+.. warning::
+
+    The ``contains``
 
 Example::
 
     SearchQuerySet().filter(content='foo')
-    
+
     # Identical to:
-    SearchQuerySet().filter(content__exact='foo')
-    
+    SearchQuerySet().filter(content__contains='foo')
+
+    # Phrase matching.
+    SearchQuerySet().filter(content__exact='hello world')
+
     # Other usages look like:
     SearchQuerySet().filter(pub_date__gte=datetime.date(2008, 1, 1), pub_date__lt=datetime.date(2009, 1, 1))
     SearchQuerySet().filter(author__in=['daniel', 'john', 'jane'])
@@ -657,7 +686,7 @@ calling ``load_all_queryset``.
     entire cache that appears before the offset you request must be filled in
     order to produce consistent results. On large result sets and at higher
     slices, this can take time.
-    
+
     This is the old behavior of ``SearchQuerySet``, so performance is no worse
     than the early days of Haystack.
 

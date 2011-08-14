@@ -4,7 +4,7 @@
 ``SearchIndex`` API
 ===================
 
-.. class:: SearchIndex(model, backend=None)
+.. class:: SearchIndex()
 
 The ``SearchIndex`` class allows the application developer a way to provide data to
 the backend in a structured format. Developers familiar with Django's ``Form``
@@ -22,22 +22,21 @@ Quick Start
 For the impatient::
 
     import datetime
-    from haystack.indexes import *
-    from haystack import site
+    from haystack import indexes
     from myapp.models import Note
     
     
-    class NoteIndex(SearchIndex):
-        text = CharField(document=True, use_template=True)
-        author = CharField(model_attr='user')
-        pub_date = DateTimeField(model_attr='pub_date')
+    class NoteIndex(indexes.SearchIndex, indexes.Indexable):
+        text = indexes.CharField(document=True, use_template=True)
+        author = indexes.CharField(model_attr='user')
+        pub_date = indexes.DateTimeField(model_attr='pub_date')
         
-        def get_queryset(self):
+        def get_model(self):
+            return Note
+        
+        def index_queryset(self):
             "Used when the entire index for model is updated."
-            return Note.objects.filter(pub_date__lte=datetime.datetime.now())
-    
-    
-    site.register(Note, NoteIndex)
+            return self.get_model().objects.filter(pub_date__lte=datetime.datetime.now())
 
 
 Background
@@ -125,13 +124,13 @@ contents of that field, which avoids the database hit.:
 
 Within ``myapp/search_indexes.py``::
 
-    class NoteIndex(SearchIndex):
+    class NoteIndex(SearchIndex, indexes.Indexable):
         text = CharField(document=True, use_template=True)
         author = CharField(model_attr='user')
         pub_date = DateTimeField(model_attr='pub_date')
         # Define the additional field.
         rendered = CharField(use_template=True, indexed=False)
-    
+
 Then, inside a template named ``search/indexes/myapp/note_rendered.txt``::
 
     <h2>{{ object.title }}</h2>
@@ -225,10 +224,13 @@ To keep with our existing example, one use case might be altering the name
 inside the ``author`` field to be "firstname lastname <email>". In this case,
 you might write the following code::
 
-    class NoteIndex(SearchIndex):
+    class NoteIndex(SearchIndex, indexes.Indexable):
         text = CharField(document=True, use_template=True)
         author = CharField(model_attr='user')
         pub_date = DateTimeField(model_attr='pub_date')
+        
+        def get_model(self):
+            return Note
         
         def prepare_author(self, obj):
             return "%s <%s>" % (obj.user.get_full_name(), obj.user.email)
@@ -240,10 +242,13 @@ data may come from the field itself.
 Just like ``Form.clean_FOO``, the field's ``prepare`` runs before the
 ``prepare_FOO``, allowing you to access ``self.prepared_data``. For example::
 
-    class NoteIndex(SearchIndex):
+    class NoteIndex(SearchIndex, indexes.Indexable):
         text = CharField(document=True, use_template=True)
         author = CharField(model_attr='user')
         pub_date = DateTimeField(model_attr='pub_date')
+        
+        def get_model(self):
+            return Note
         
         def prepare_author(self, obj):
             # Say we want last name first, the hard way.
@@ -258,11 +263,14 @@ Just like ``Form.clean_FOO``, the field's ``prepare`` runs before the
 This method is fully function with ``model_attr``, so if there's no convenient
 way to access the data you want, this is an excellent way to prepare it::
 
-    class NoteIndex(SearchIndex):
+    class NoteIndex(SearchIndex, indexes.Indexable):
         text = CharField(document=True, use_template=True)
         author = CharField(model_attr='user')
         categories = MultiValueField()
         pub_date = DateTimeField(model_attr='pub_date')
+        
+        def get_model(self):
+            return Note
         
         def prepare_categories(self, obj):
             # Since we're using a M2M relationship with a complex lookup,
@@ -281,10 +289,13 @@ Overriding this method is useful if you need to collect more than one piece
 of data or need to incorporate additional data that is not well represented
 by a single ``SearchField``. An example might look like::
 
-    class NoteIndex(SearchIndex):
+    class NoteIndex(SearchIndex, indexes.Indexable):
         text = CharField(document=True, use_template=True)
         author = CharField(model_attr='user')
         pub_date = DateTimeField(model_attr='pub_date')
+        
+        def get_model(self):
+            return Note
         
         def prepare(self, object):
             self.prepared_data = super(NoteIndex, self).prepare(object)
@@ -319,9 +330,9 @@ object and write its ``prepare`` method to populate/alter the data any way you
 choose. For instance, a (naive) user-created ``GeoPointField`` might look
 something like::
 
-    from haystack.indexes import CharField
+    from haystack import indexes
     
-    class GeoPointField(CharField):
+    class GeoPointField(indexes.CharField):
         def __init__(self, **kwargs):
             kwargs['default'] = '0.00-0.00'
             super(GeoPointField, self).__init__(**kwargs)
@@ -362,14 +373,34 @@ already present in the quickest and most efficient way.
 ``Search Index``
 ================
 
-``get_queryset``
-----------------
+``get_model``
+-------------
 
-.. method:: SearchIndex.get_queryset(self)
+.. method:: SearchIndex.get_model(self)
+
+Should return the ``Model`` class (not an instance) that the rest of the
+``SearchIndex`` should use.
+
+This method is required & you must override it to return the correct class.
+
+``index_queryset``
+------------------
+
+.. method:: SearchIndex.index_queryset(self)
 
 Get the default QuerySet to index when doing a full update.
 
 Subclasses can override this method to avoid indexing certain objects.
+
+``read_queryset``
+-----------------
+
+.. method:: SearchIndex.read_queryset(self)
+
+Get the default QuerySet for read actions.
+
+Subclasses can override this method to work with other managers.
+Useful when working with default managers that filter some objects.
 
 ``prepare``
 -----------
@@ -388,39 +419,59 @@ Returns the field that supplies the primary document to be indexed.
 ``update``
 ----------
 
-.. method:: SearchIndex.update(self)
+.. method:: SearchIndex.update(self, using=None)
 
-Update the entire index.
+Updates the entire index.
+
+If ``using`` is provided, it specifies which connection should be
+used. Default relies on the routers to decide which backend should
+be used.
 
 ``update_object``
 -----------------
 
-.. method:: SearchIndex.update_object(self, instance, **kwargs)
+.. method:: SearchIndex.update_object(self, instance, using=None, **kwargs)
 
 Update the index for a single object. Attached to the class's
 post-save hook.
 
+If ``using`` is provided, it specifies which connection should be
+used. Default relies on the routers to decide which backend should
+be used.
+
 ``remove_object``
 -----------------
 
-.. method:: SearchIndex.remove_object(self, instance, **kwargs)
+.. method:: SearchIndex.remove_object(self, instance, using=None, **kwargs)
 
 Remove an object from the index. Attached to the class's 
 post-delete hook.
 
+If ``using`` is provided, it specifies which connection should be
+used. Default relies on the routers to decide which backend should
+be used.
+
 ``clear``
 ---------
 
-.. method:: SearchIndex.clear(self)
+.. method:: SearchIndex.clear(self, using=None)
 
-Clear the entire index.
+Clears the entire index.
+
+If ``using`` is provided, it specifies which connection should be
+used. Default relies on the routers to decide which backend should
+be used.
 
 ``reindex``
 -----------
 
-.. method:: SearchIndex.reindex(self)
+.. method:: SearchIndex.reindex(self, using=None)
 
-Completely clear the index for this model and rebuild it.
+Completely clears the index for this model and rebuilds it.
+
+If ``using`` is provided, it specifies which connection should be
+used. Default relies on the routers to decide which backend should
+be used.
 
 ``get_updated_field``
 ---------------------
@@ -472,10 +523,13 @@ By default, returns ``all()`` on the model's default manager.
 
 Example::
 
-    class NoteIndex(SearchIndex):
+    class NoteIndex(SearchIndex, indexes.Indexable):
         text = CharField(document=True, use_template=True)
         author = CharField(model_attr='user')
         pub_date = DateTimeField(model_attr='pub_date')
+        
+        def get_model(self):
+            return Note
         
         def load_all_queryset(self):
             # Pull all objects related to the Note in search results.
@@ -542,30 +596,28 @@ Quick Start
 For the impatient::
 
     import datetime
-    from haystack.indexes import *
-    from haystack import site
+    from haystack import indexes
     from myapp.models import Note
     
     # All Fields
-    class AllNoteIndex(ModelSearchIndex):
+    class AllNoteIndex(indexes.ModelSearchIndex, indexes.Indexable):
         class Meta:
-            pass
+            model = Note
     
     # Blacklisted Fields
-    class LimitedNoteIndex(ModelSearchIndex):
+    class LimitedNoteIndex(indexes.ModelSearchIndex, indexes.Indexable):
         class Meta:
+            model = Note
             excludes = ['user']
     
     # Whitelisted Fields
-    class NoteIndex(ModelSearchIndex):
+    class NoteIndex(indexes.ModelSearchIndex, indexes.Indexable):
         class Meta:
+            model = Note
             fields = ['user', 'pub_date']
         
         # Note that regular ``SearchIndex`` methods apply.
-        def get_queryset(self):
+        def index_queryset(self):
             "Used when the entire index for model is updated."
             return Note.objects.filter(pub_date__lte=datetime.datetime.now())
-    
-    
-    site.register(Note, NoteIndex)
 

@@ -45,6 +45,16 @@ Using: Xapian
 * http://www.canadiantire.ca/ (Portions of)
 
 
+Vickerey.com
+------------
+
+For (really well done) search & faceting.
+
+Using: Solr
+
+* http://store.vickerey.com/products/search/
+
+
 Eldarion
 --------
 
@@ -208,3 +218,14 @@ For general search.
 Using: Xapian
 
 * http://devcheatsheet.com/
+
+
+TodasLasRecetas
+---------------
+
+For search, faceting & More Like This.
+
+Using: Solr
+
+* http://www.todaslasrecetas.es/receta/s/?q=langostinos
+* http://www.todaslasrecetas.es/receta/9526/brochetas-de-langostinos
