@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import shutil
@@ -81,6 +82,8 @@ class WhooshSearchBackend(BaseSearchBackend):
         if self.use_file_storage and not self.path:
             raise ImproperlyConfigured("You must specify a 'PATH' in your settings for connection '%s'." % connection_alias)
 
+        self.log = logging.getLogger('haystack')
+
     def setup(self):
         """
         Defers loading until needed.
@@ -148,7 +151,7 @@ class WhooshSearchBackend(BaseSearchBackend):
             elif field_class.field_type == 'ngram':
                 schema_fields[field_class.index_fieldname] = NGRAM(minsize=3, maxsize=15, stored=field_class.stored, field_boost=field_class.boost)
             elif field_class.field_type == 'edge_ngram':
-                schema_fields[field_class.index_fieldname] = NGRAMWORDS(minsize=2, maxsize=15, stored=field_class.stored, field_boost=field_class.boost)
+                schema_fields[field_class.index_fieldname] = NGRAMWORDS(minsize=2, maxsize=15, at='start', stored=field_class.stored, field_boost=field_class.boost)
             else:
                 schema_fields[field_class.index_fieldname] = TEXT(stored=True, analyzer=StemmingAnalyzer(), field_boost=field_class.boost)
 
