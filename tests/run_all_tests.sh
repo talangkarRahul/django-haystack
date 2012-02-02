@@ -19,10 +19,18 @@ echo "** SOLR **"
 django-admin.py test $@ solr_tests --settings=solr_settings
 echo ""
 
+echo "** Elasticsearch **"
+django-admin.py test elasticsearch_tests --settings=elasticsearch_settings
+echo ""
+
 echo "** WHOOSH **"
 django-admin.py test $@ whoosh_tests --settings=whoosh_settings
 echo ""
 
 echo "** MULTIPLE INDEX **"
 django-admin.py test $@ multipleindex --settings=multipleindex_settings
+echo ""
+
+echo "** SPATIAL **"
+django-admin.py test spatial --settings=spatial_settings
 echo ""

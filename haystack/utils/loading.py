@@ -3,6 +3,7 @@ import inspect
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.datastructures import SortedDict
+from django.utils.module_loading import module_has_submodule
 from haystack.constants import Indexable, DEFAULT_ALIAS
 from haystack.exceptions import NotHandled, SearchFieldError
 try:
@@ -99,6 +100,14 @@ class ConnectionHandler(object):
         self._connections[key] = load_backend(self.connections_info[key]['ENGINE'])(using=key)
         return self._connections[key]
 
+    def reload(self, key):
+        try:
+            del self._connections[key]
+        except KeyError:
+            pass
+
+        return self.__getitem__(key)
+
     def all(self):
         return [self[alias] for alias in self.connections_info]
 
@@ -142,6 +151,7 @@ class UnifiedIndex(object):
         self._built = False
         self._indexes_setup = False
         self.excluded_indexes = excluded_indexes or []
+        self.excluded_indexes_ids = {}
         self.document_field = getattr(settings, 'HAYSTACK_DOCUMENT_FIELD', 'text')
         self._fieldnames = {}
         self._facet_fieldnames = {}
@@ -150,9 +160,14 @@ class UnifiedIndex(object):
         indexes = []
 
         for app in settings.INSTALLED_APPS:
+            mod = importlib.import_module(app)
+
             try:
                 search_index_module = importlib.import_module("%s.search_indexes" % app)
             except ImportError:
+                if module_has_submodule(mod, 'search_indexes'):
+                    raise
+
                 continue
 
             for item_name, item in inspect.getmembers(search_index_module, inspect.isclass):
@@ -160,7 +175,8 @@ class UnifiedIndex(object):
                     # We've got an index. Check if we should be ignoring it.
                     class_path = "%s.search_indexes.%s" % (app, item_name)
 
-                    if class_path in self.excluded_indexes:
+                    if class_path in self.excluded_indexes or self.excluded_indexes_ids.get(item_name) == id(item):
+                        self.excluded_indexes_ids[str(item_name)] = id(item)
                         continue
 
                     indexes.append(item())

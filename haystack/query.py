@@ -3,8 +3,9 @@ import operator
 import warnings
 from haystack import connections, connection_router
 from haystack.backends import SQ
-from haystack.constants import REPR_OUTPUT_SIZE, ITERATOR_LOAD_PER_QUERY, DEFAULT_OPERATOR, DEFAULT_ALIAS
+from haystack.constants import REPR_OUTPUT_SIZE, ITERATOR_LOAD_PER_QUERY, DEFAULT_OPERATOR
 from haystack.exceptions import NotHandled
+from haystack.inputs import Raw, Clean, AutoQuery
 
 
 class SearchQuerySet(object):
@@ -151,11 +152,11 @@ class SearchQuerySet(object):
             if not self._fill_cache(current_position, current_position + ITERATOR_LOAD_PER_QUERY):
                 raise StopIteration
 
-    def _fill_cache(self, start, end):
+    def _fill_cache(self, start, end, **kwargs):
         # Tell the query where to start from and how many we'd like.
         self.query._reset()
         self.query.set_limits(start, end)
-        results = self.query.get_results()
+        results = self.query.get_results(**kwargs)
 
         if results == None or len(results) == 0:
             return False
@@ -174,6 +175,15 @@ class SearchQuerySet(object):
 
         if end is None:
             end = self.query.get_count()
+
+        to_cache = self.post_process_results(results)
+
+        # Assign by slice.
+        self._result_cache[start:start + len(to_cache)] = to_cache
+        return True
+
+    def post_process_results(self, results):
+        to_cache = []
 
         # Check if we wish to load all objects.
         if self._load_all:
@@ -198,8 +208,6 @@ class SearchQuerySet(object):
                     # Revert to old behaviour
                     loaded_objects[model] = model._default_manager.in_bulk(models_pks[model])
 
-        to_cache = []
-
         for result in results:
             if self._load_all:
                 # We have to deal with integer keys being cast from strings
@@ -219,10 +227,7 @@ class SearchQuerySet(object):
 
             to_cache.append(result)
 
-        # Assign by slice.
-        self._result_cache[start:start + len(to_cache)] = to_cache
-        return True
-
+        return to_cache
 
     def __getitem__(self, k):
         """
@@ -309,6 +314,12 @@ class SearchQuerySet(object):
 
         return clone
 
+    def order_by_distance(self, **kwargs):
+        """Alters the order in which the results should appear."""
+        clone = self._clone()
+        clone.query.add_order_by_distance(**kwargs)
+        return clone
+
     def highlight(self):
         """Adds highlighting to the results."""
         clone = self._clone()
@@ -350,6 +361,27 @@ class SearchQuerySet(object):
         clone.query.add_field_facet(field)
         return clone
 
+    def within(self, field, point_1, point_2):
+        """Spatial: Adds a bounding box search to the query."""
+        clone = self._clone()
+        clone.query.add_within(field, point_1, point_2)
+        return clone
+
+    def dwithin(self, field, point, distance):
+        """Spatial: Adds a distance-based search to the query."""
+        clone = self._clone()
+        clone.query.add_dwithin(field, point, distance)
+        return clone
+
+    def distance(self, field, point):
+        """
+        Spatial: Denotes results must have distance measurements from the
+        provided point.
+        """
+        clone = self._clone()
+        clone.query.add_distance(field, point)
+        return clone
+
     def date_facet(self, field, start_date, end_date, gap_by, gap_amount=1):
         """Adds faceting to a query for the provided field by date."""
         clone = self._clone()
@@ -370,9 +402,7 @@ class SearchQuerySet(object):
 
     def raw_search(self, query_string, **kwargs):
         """Passes a raw query directly to the backend."""
-        clone = self._clone()
-        clone.query.raw_search(query_string, **kwargs)
-        return clone
+        return self.filter(content=Raw(query_string, **kwargs))
 
     def load_all(self):
         """Efficiently populates the objects in the search results."""
@@ -380,60 +410,17 @@ class SearchQuerySet(object):
         clone._load_all = True
         return clone
 
-    def auto_query(self, query_string, fieldname=None):
+    def auto_query(self, query_string, fieldname='content'):
         """
         Performs a best guess constructing the search query.
 
         This method is somewhat naive but works well enough for the simple,
         common cases.
         """
-        clone = self._clone()
-
-        # Pull out anything wrapped in quotes and do an exact match on it.
-        open_quote_position = None
-        non_exact_query = query_string
-
-        if fieldname is None:
-            fieldname = 'content'
-
-        for offset, char in enumerate(query_string):
-            if char == '"':
-                if open_quote_position != None:
-                    current_match = non_exact_query[open_quote_position + 1:offset]
-
-                    if current_match:
-                        current_kwargs = {
-                            "%s__exact" % fieldname: clone.query.clean(current_match),
-                        }
-                        clone = clone.filter(**current_kwargs)
-
-                    non_exact_query = non_exact_query.replace('"%s"' % current_match, '', 1)
-                    open_quote_position = None
-                else:
-                    open_quote_position = offset
-
-        # Pseudo-tokenize the rest of the query.
-        keywords = non_exact_query.split()
-
-        # Loop through keywords and add filters to the query.
-        for keyword in keywords:
-            exclude = False
-
-            if keyword.startswith('-') and len(keyword) > 1:
-                keyword = keyword[1:]
-                exclude = True
-
-            cleaned_keyword = clone.query.clean(keyword)
-            keyword_kwargs = {
-                fieldname: cleaned_keyword,
-            }
-
-            if exclude:
-                clone = clone.exclude(**keyword_kwargs)
-            else:
-                clone = clone.filter(**keyword_kwargs)
-
-        return clone
+        kwargs = {
+            fieldname: AutoQuery(query_string)
+        }
+        return self.filter(**kwargs)
 
     def autocomplete(self, **kwargs):
         """
@@ -495,8 +482,11 @@ class SearchQuerySet(object):
         This will cause the query to execute and should generally be used when
         presenting the data.
         """
-        clone = self._clone()
-        return clone.query.get_facet_counts()
+        if self.query.has_run():
+            return self.query.get_facet_counts()
+        else:
+            clone = self._clone()
+            return clone.query.get_facet_counts()
 
     def spelling_suggestion(self, preferred_query=None):
         """
@@ -508,9 +498,39 @@ class SearchQuerySet(object):
         This will cause the query to execute and should generally be used when
         presenting the data.
         """
-        clone = self._clone()
-        return clone.query.get_spelling_suggestion(preferred_query)
+        if self.query.has_run():
+            return self.query.get_spelling_suggestion(preferred_query)
+        else:
+            clone = self._clone()
+            return clone.query.get_spelling_suggestion(preferred_query)
 
+    def values(self, *fields):
+        """
+        Returns a list of dictionaries, each containing the key/value pairs for
+        the result, exactly like Django's ``ValuesQuerySet``.
+        """
+        qs = self._clone(klass=ValuesSearchQuerySet)
+        qs._fields.extend(fields)
+        return qs
+
+    def values_list(self, *fields, **kwargs):
+        """
+        Returns a list of field values as tuples, exactly like Django's
+        ``QuerySet.values``.
+
+        Optionally accepts a ``flat=True`` kwarg, which in the case of a
+        single field being provided, will return a flat list of that field
+        rather than a list of tuples.
+        """
+        flat = kwargs.pop("flat", False)
+
+        if flat and len(fields) > 1:
+            raise TypeError("'flat' is not valid when values_list is called with more than one field.")
+
+        qs = self._clone(klass=ValuesListSearchQuerySet)
+        qs._fields.extend(fields)
+        qs._flat = flat
+        return qs
 
     # Utility methods.
 
@@ -546,6 +566,72 @@ class EmptySearchQuerySet(SearchQuerySet):
 
     def facet_counts(self):
         return {}
+
+
+class ValuesListSearchQuerySet(SearchQuerySet):
+    """
+    A ``SearchQuerySet`` which returns a list of field values as tuples, exactly
+    like Django's ``ValuesListQuerySet``.
+    """
+    def __init__(self, *args, **kwargs):
+        super(ValuesListSearchQuerySet, self).__init__(*args, **kwargs)
+        self._flat = False
+        self._fields = []
+
+        # Removing this dependency would require refactoring much of the backend
+        # code (_process_results, etc.) and these aren't large enough to make it
+        # an immediate priority:
+        self._internal_fields = ['id', 'django_ct', 'django_id', 'score']
+
+    def _clone(self, klass=None):
+        clone = super(ValuesListSearchQuerySet, self)._clone(klass=klass)
+        clone._fields = self._fields
+        clone._flat = self._flat
+        return clone
+
+    def _fill_cache(self, start, end):
+        query_fields = set(self._internal_fields)
+        query_fields.update(self._fields)
+        kwargs = {
+            'fields': query_fields
+        }
+        return super(ValuesListSearchQuerySet, self)._fill_cache(start, end, **kwargs)
+
+    def post_process_results(self, results):
+        to_cache = []
+
+        if self._flat:
+            accum = to_cache.extend
+        else:
+            accum = to_cache.append
+
+        for result in results:
+            accum([getattr(result, i, None) for i in self._fields])
+
+        return to_cache
+
+
+class ValuesSearchQuerySet(ValuesListSearchQuerySet):
+    """
+    A ``SearchQuerySet`` which returns a list of dictionaries, each containing
+    the key/value pairs for the result, exactly like Django's
+    ``ValuesQuerySet``.
+    """
+    def _fill_cache(self, start, end):
+        query_fields = set(self._internal_fields)
+        query_fields.update(self._fields)
+        kwargs = {
+            'fields': query_fields
+        }
+        return super(ValuesListSearchQuerySet, self)._fill_cache(start, end, **kwargs)
+
+    def post_process_results(self, results):
+        to_cache = []
+
+        for result in results:
+            to_cache.append(dict((i, getattr(result, i, None)) for i in self._fields))
+
+        return to_cache
 
 
 class RelatedSearchQuerySet(SearchQuerySet):

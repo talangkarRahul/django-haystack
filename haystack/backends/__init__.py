@@ -6,11 +6,11 @@ from django.db.models import Q
 from django.db.models.base import ModelBase
 from django.utils import tree
 from django.utils.encoding import force_unicode
-from haystack.constants import DJANGO_CT, VALID_FILTERS, FILTER_SEPARATOR, DEFAULT_ALIAS
+from haystack.constants import DJANGO_CT, VALID_FILTERS, FILTER_SEPARATOR, DEFAULT_ALIAS, DEFAULT_OPERATOR
 from haystack.exceptions import MoreLikeThisError, FacetingError
+from haystack.inputs import Clean
 from haystack.models import SearchResult
 from haystack.utils.loading import UnifiedIndex
-
 
 VALID_GAPS = ['year', 'month', 'day', 'hour', 'minute', 'second']
 
@@ -35,6 +35,8 @@ def log_query(func):
                     'additional_args': args,
                     'additional_kwargs': kwargs,
                     'time': "%.3f" % (stop - start),
+                    'start': start,
+                    'stop': stop,
                 })
 
     return wrapper
@@ -68,6 +70,7 @@ class BaseSearchBackend(object):
         self.include_spelling = connection_options.get('INCLUDE_SPELLING', False)
         self.batch_size = connection_options.get('BATCH_SIZE', 1000)
         self.silently_fail = connection_options.get('SILENTLY_FAIL', True)
+        self.distance_available = connection_options.get('DISTANCE_AVAILABLE', False)
 
     def update(self, index, iterable):
         """
@@ -102,7 +105,8 @@ class BaseSearchBackend(object):
     @log_query
     def search(self, query_string, sort_by=None, start_offset=0, end_offset=None,
                fields='', highlight=False, facets=None, date_facets=None, query_facets=None,
-               narrow_queries=None, spelling_query=None,
+               narrow_queries=None, spelling_query=None, within=None,
+               dwithin=None, distance_point=None, models=None,
                limit_to_registered_models=None, result_class=None, **kwargs):
         """
         Takes a query to search on and returns dictionary.
@@ -202,7 +206,7 @@ class SearchNode(tree.Node):
         return '<SQ: %s %s>' % (self.connector, self.as_query_string(self._repr_query_fragment_callback))
 
     def _repr_query_fragment_callback(self, field, filter_type, value):
-        return '%s%s%s=%s' % (field, FILTER_SEPARATOR, filter_type, force_unicode(value).encode('utf8'))
+        return "%s%s%s=%s" % (field, FILTER_SEPARATOR, filter_type, force_unicode(value).encode('utf8'))
 
     def as_query_string(self, query_fragment_callback):
         """
@@ -217,12 +221,7 @@ class SearchNode(tree.Node):
             else:
                 expression, value = child
                 field, filter_type = self.split_expression(expression)
-
-                if filter_type in ['contains', 'startswith'] and isinstance(value, basestring):
-                    for token in value.split(' '):
-                        result.append(query_fragment_callback(field, filter_type, token))
-                else:
-                    result.append(query_fragment_callback(field, filter_type, value))
+                result.append(query_fragment_callback(field, filter_type, value))
 
         conn = ' %s ' % self.connector
         query_string = conn.join(result)
@@ -290,6 +289,16 @@ class BaseSearchQuery(object):
         self.date_facets = {}
         self.query_facets = []
         self.narrow_queries = set()
+        #: If defined, fields should be a list of field names - no other values
+        #: will be retrieved so the caller must be careful to include django_ct
+        #: and django_id when using code which expects those to be included in
+        #: the results
+        self.fields = []
+        # Geospatial-related information
+        self.within = {}
+        self.dwithin = {}
+        self.distance_point = {}
+        # Internal.
         self._raw_query = None
         self._raw_query_params = {}
         self._more_like_this = False
@@ -356,23 +365,41 @@ class BaseSearchQuery(object):
         if self.boost:
             kwargs['boost'] = self.boost
 
+        if self.within:
+            kwargs['within'] = self.within
+
+        if self.dwithin:
+            kwargs['dwithin'] = self.dwithin
+
+        if self.distance_point:
+            kwargs['distance_point'] = self.distance_point
+
         if self.result_class:
             kwargs['result_class'] = self.result_class
 
+        if self.fields:
+            kwargs['fields'] = self.fields
+
+        if self.models:
+            kwargs['models'] = self.models
+
         return kwargs
 
-    def run(self, spelling_query=None):
+    def run(self, spelling_query=None, **kwargs):
         """Builds and executes the query. Returns a list of search results."""
         final_query = self.build_query()
-        kwargs = self.build_params(spelling_query=spelling_query)
+        search_kwargs = self.build_params(spelling_query=spelling_query)
 
-        results = self.backend.search(final_query, **kwargs)
+        if kwargs:
+            search_kwargs.update(kwargs)
+
+        results = self.backend.search(final_query, **search_kwargs)
         self._results = results.get('results', [])
         self._hit_count = results.get('hits', 0)
         self._facet_counts = self.post_process_facets(results)
         self._spelling_suggestion = results.get('spelling_suggestion', None)
 
-    def run_mlt(self):
+    def run_mlt(self, **kwargs):
         """
         Executes the More Like This. Returns a list of search results similar
         to the provided document (and optionally query).
@@ -380,21 +407,30 @@ class BaseSearchQuery(object):
         if self._more_like_this is False or self._mlt_instance is None:
             raise MoreLikeThisError("No instance was provided to determine 'More Like This' results.")
 
-        kwargs = {
+        search_kwargs = {
             'result_class': self.result_class,
         }
 
+        if self.models:
+            search_kwargs['models'] = self.models
+
+        if kwargs:
+            search_kwargs.update(kwargs)
+
         additional_query_string = self.build_query()
-        results = self.backend.more_like_this(self._mlt_instance, additional_query_string, **kwargs)
+        results = self.backend.more_like_this(self._mlt_instance, additional_query_string, **search_kwargs)
         self._results = results.get('results', [])
         self._hit_count = results.get('hits', 0)
 
-    def run_raw(self):
+    def run_raw(self, **kwargs):
         """Executes a raw query. Returns a list of search results."""
-        kwargs = self.build_params()
-        kwargs.update(self._raw_query_params)
+        search_kwargs = self.build_params()
+        search_kwargs.update(self._raw_query_params)
 
-        results = self.backend.search(self._raw_query, **kwargs)
+        if kwargs:
+            search_kwargs.update(kwargs)
+
+        results = self.backend.search(self._raw_query, **search_kwargs)
         self._results = results.get('results', [])
         self._hit_count = results.get('hits', 0)
         self._facet_counts = results.get('facets', {})
@@ -408,10 +444,10 @@ class BaseSearchQuery(object):
         the results.
         """
         if self._hit_count is None:
-            # Limit the slice to 10 so we get a count without consuming
+            # Limit the slice to 1 so we get a count without consuming
             # everything.
             if not self.end_offset:
-                self.end_offset = 10
+                self.end_offset = 1
 
             if self._more_like_this:
                 # Special case for MLT.
@@ -424,7 +460,7 @@ class BaseSearchQuery(object):
 
         return self._hit_count
 
-    def get_results(self):
+    def get_results(self, **kwargs):
         """
         Returns the results received from the backend.
 
@@ -434,12 +470,12 @@ class BaseSearchQuery(object):
         if self._results is None:
             if self._more_like_this:
                 # Special case for MLT.
-                self.run_mlt()
+                self.run_mlt(**kwargs)
             elif self._raw_query:
                 # Special case for raw queries.
-                self.run_raw()
+                self.run_raw(**kwargs)
             else:
-                self.run()
+                self.run(**kwargs)
 
         return self._results
 
@@ -480,22 +516,11 @@ class BaseSearchQuery(object):
         Interprets the collected query metadata and builds the final query to
         be sent to the backend.
         """
-        query = self.query_filter.as_query_string(self.build_query_fragment)
+        final_query = self.query_filter.as_query_string(self.build_query_fragment)
 
-        if not query:
+        if not final_query:
             # Match all.
-            query = self.matching_all_fragment()
-
-        if len(self.models):
-            models = sorted(['%s:%s.%s' % (DJANGO_CT, model._meta.app_label, model._meta.module_name) for model in self.models])
-            models_clause = ' OR '.join(models)
-
-            if query != self.matching_all_fragment():
-                final_query = '(%s) AND (%s)' % (query, models_clause)
-            else:
-                final_query = models_clause
-        else:
-            final_query = query
+            final_query = self.matching_all_fragment()
 
         if self.boost:
             boost_list = []
@@ -533,6 +558,9 @@ class BaseSearchQuery(object):
 
         A basic (override-able) implementation is provided.
         """
+        if not isinstance(query_fragment, basestring):
+            return query_fragment
+
         words = query_fragment.split()
         cleaned_words = []
 
@@ -547,11 +575,19 @@ class BaseSearchQuery(object):
 
         return ' '.join(cleaned_words)
 
+    def build_not_query(self, query_string):
+        if ' ' in query_string:
+            query_string = "(%s)" % query_string
+
+        return u"NOT %s" % query_string
+
+    def build_exact_query(self, query_string):
+        return u'"%s"' % query_string
+
     def add_filter(self, query_filter, use_or=False):
         """
         Adds a SQ to the current query.
         """
-        # TODO: consider supporting add_to_query callbacks on q objects
         if use_or:
             connector = SQ.OR
         else:
@@ -584,12 +620,23 @@ class BaseSearchQuery(object):
         """Orders the search result by a field."""
         self.order_by.append(field)
 
+    def add_order_by_distance(self, **kwargs):
+        """Orders the search result by distance from point."""
+        raise NotImplementedError("Subclasses must provide a way to add order by distance in the 'add_order_by_distance' method.")
+
     def clear_order_by(self):
         """
         Clears out all ordering that has been already added, reverting the
         query to relevancy.
         """
         self.order_by = []
+
+    def clear_order_by_distance(self):
+        """
+        Clears out all distance ordering that has been already added, reverting the
+        query to relevancy.
+        """
+        self.order_by_distance = []
 
     def add_model(self, model):
         """
@@ -643,6 +690,35 @@ class BaseSearchQuery(object):
     def add_highlight(self):
         """Adds highlighting to the search results."""
         self.highlight = True
+
+    def add_within(self, field, point_1, point_2):
+        """Adds bounding box parameters to search query."""
+        from haystack.utils.geo import ensure_point
+        self.within = {
+            'field': field,
+            'point_1': ensure_point(point_1),
+            'point_2': ensure_point(point_2),
+        }
+
+    def add_dwithin(self, field, point, distance):
+        """Adds radius-based parameters to search query."""
+        from haystack.utils.geo import ensure_point, ensure_distance
+        self.dwithin = {
+            'field': field,
+            'point': ensure_point(point),
+            'distance': ensure_distance(distance),
+        }
+
+    def add_distance(self, field, point):
+        """
+        Denotes that results should include distance measurements from the
+        point passed in.
+        """
+        from haystack.utils.geo import ensure_point
+        self.distance_point = {
+            'field': field,
+            'point': ensure_point(point),
+        }
 
     def add_field_facet(self, field):
         """Adds a regular facet on a field."""
@@ -750,6 +826,9 @@ class BaseSearchQuery(object):
         clone.start_offset = self.start_offset
         clone.end_offset = self.end_offset
         clone.result_class = self.result_class
+        clone.within = self.within.copy()
+        clone.dwithin = self.dwithin.copy()
+        clone.distance_point = self.distance_point.copy()
         clone._raw_query = self._raw_query
         clone._raw_query_params = self._raw_query_params
         return clone

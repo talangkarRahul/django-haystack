@@ -40,14 +40,14 @@ note-taking application. Here is ``myapp/models.py``::
 
     from django.db import models
     from django.contrib.auth.models import User
-    
-    
+
+
     class Note(models.Model):
         user = models.ForeignKey(User)
         pub_date = models.DateTimeField()
         title = models.CharField(max_length=200)
         body = models.TextField()
-        
+
         def __unicode__(self):
             return self.title
 
@@ -65,6 +65,22 @@ Add Haystack To ``INSTALLED_APPS``
 
 As with most Django applications, you should add Haystack to the
 ``INSTALLED_APPS`` within your settings file (usually ``settings.py``).
+
+Example::
+
+    INSTALLED_APPS = [
+        'django.contrib.admin',
+        'django.contrib.auth',
+        'django.contrib.contenttypes',
+        'django.contrib.sessions',
+        'django.contrib.sites',
+
+        # Added.
+        'haystack',
+
+        # Then your usual apps...
+        'blog',
+    ]
 
 
 Modify Your ``settings.py``
@@ -88,6 +104,20 @@ Example::
             'URL': 'http://127.0.0.1:8983/solr'
             # ...or for multicore...
             # 'URL': 'http://127.0.0.1:8983/solr/mysite',
+        },
+    }
+
+
+Elasticsearch
+~~~~~~~~~~~~~
+
+Example::
+
+    HAYSTACK_CONNECTIONS = {
+        'default': {
+            'ENGINE': 'haystack.backends.elasticsearch_backend.ElasticsearchSearchEngine',
+            'URL': 'http://127.0.0.1:9200/',
+            'INDEX_NAME': 'haystack',
         },
     }
 
@@ -138,6 +168,13 @@ Simple
 The ``simple`` backend using very basic matching via the database itself. It's
 not recommended for production use but it will return results.
 
+.. warning::
+
+    This backend does *NOT* work like the other backends do. Data preparation
+    does nothing & advanced filtering calls do not work. You really probably
+    don't want this unless you're in an environment where you just want to
+    silence Haystack.
+
 Example::
 
     HAYSTACK_CONNECTIONS = {
@@ -162,33 +199,28 @@ You generally create a unique ``SearchIndex`` for each type of ``Model`` you
 wish to index, though you can reuse the same ``SearchIndex`` between different
 models if you take care in doing so and your field names are very standardized.
 
-To use a ``SearchIndex``, you need to register it with the ``Model`` it applies
-to and the ``SearchSite`` it ought to belong to. Registering indexes in Haystack
-is very similar to the way you register models and ``ModelAdmin`` classes with
-the `Django admin site`_.
-
-To build a ``SearchIndex``, all that's necessary is to subclass ``SearchIndex``,
-define the fields you want to store data with and register it.
+To build a ``SearchIndex``, all that's necessary is to subclass both
+``indexes.SearchIndex`` & ``indexes.Indexable``,
+define the fields you want to store data with and define a ``get_model`` method.
 
 We'll create the following ``NoteIndex`` to correspond to our ``Note``
 model. This code generally goes in a ``search_indexes.py`` file within the app
 it applies to, though that is not required. This allows
-``haystack.autodiscover()`` to automatically pick it up. The
-``NoteIndex`` should look like::
+Haystack to automatically pick it up. The ``NoteIndex`` should look like::
 
     import datetime
     from haystack import indexes
     from myapp.models import Note
-    
-    
+
+
     class NoteIndex(indexes.SearchIndex, indexes.Indexable):
         text = indexes.CharField(document=True, use_template=True)
         author = indexes.CharField(model_attr='user')
         pub_date = indexes.DateTimeField(model_attr='pub_date')
-        
+
         def get_model(self):
             return Note
-        
+
         def index_queryset(self):
             """Used when the entire index for model is updated."""
             return self.get_model().objects.filter(pub_date__lte=datetime.datetime.now())
@@ -202,7 +234,7 @@ which field is the primary field for searching within.
     When you choose a ``document=True`` field, it should be consistently named
     across all of your ``SearchIndex`` classes to avoid confusing the backend.
     The convention is to name this field ``text``.
-    
+
     There is nothing special about the ``text`` field name used in all of the
     examples. It could be anything; you could call it ``pink_polka_dot`` and
     it won't matter. It's simply a convention to call it ``text``.
@@ -252,10 +284,10 @@ be very simple. The following is enough to get going (your template/block names
 will likely differ)::
 
     {% extends 'base.html' %}
-    
+
     {% block content %}
         <h2>Search</h2>
-        
+
         <form method="get" action=".">
             <table>
                 {{ form.as_table }}
@@ -266,10 +298,10 @@ will likely differ)::
                     </td>
                 </tr>
             </table>
-            
+
             {% if query %}
                 <h3>Results</h3>
-                
+
                 {% for result in page.object_list %}
                     <p>
                         <a href="{{ result.object.get_absolute_url }}">{{ result.object.title }}</a>
@@ -277,7 +309,7 @@ will likely differ)::
                 {% empty %}
                     <p>No results found.</p>
                 {% endfor %}
-                
+
                 {% if page.has_previous or page.has_next %}
                     <div>
                         {% if page.has_previous %}<a href="?q={{ query }}&amp;page={{ page.previous_page_number }}">{% endif %}&laquo; Previous{% if page.has_previous %}</a>{% endif %}
@@ -322,11 +354,11 @@ models were processed and placed in the index.
     Using the standard ``SearchIndex``, your search index content is only
     updated whenever you run either ``./manage.py update_index`` or start
     afresh with ``./manage.py rebuild_index``.
-    
+
     You should cron up a ``./manage.py update_index`` job at whatever interval
     works best for your site (using ``--age=<num_hours>`` reduces the number of
     things to update).
-    
+
     Alternatively, if you have low traffic and/or your search engine can handle
     it, the ``RealTimeSearchIndex`` automatically handles updates/deletes
     for you.

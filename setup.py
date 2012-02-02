@@ -4,7 +4,7 @@ from distutils.core import setup
 
 setup(
     name='django-haystack',
-    version='2.0.0-alpha',
+    version='2.0.0-beta',
     description='Pluggable search for Django.',
     author='Daniel Lindsley',
     author_email='daniel@toastdriven.com',
@@ -19,7 +19,10 @@ setup(
         'haystack.utils',
     ],
     package_data={
-        'haystack': ['templates/search_configuration/*']
+        'haystack': [
+            'templates/panels/*',
+            'templates/search_configuration/*',
+        ]
     },
     classifiers=[
         'Development Status :: 5 - Production/Stable',

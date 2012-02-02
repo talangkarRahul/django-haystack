@@ -16,6 +16,7 @@ INSTALLED_APPS = [
     'core',
 ]
 
+SITE_ID = 1
 ROOT_URLCONF = 'core.urls'
 
 HAYSTACK_CONNECTIONS = {
@@ -23,3 +24,5 @@ HAYSTACK_CONNECTIONS = {
         'ENGINE': 'core.tests.mocks.MockEngine',
     },
 }
+
+SITE_ID = 1

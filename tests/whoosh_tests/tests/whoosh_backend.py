@@ -474,15 +474,13 @@ class WhooshBoostBackendTestCase(TestCase):
         self.sb.update(self.wmmi, self.sample_objs)
         self.raw_whoosh = self.raw_whoosh.refresh()
         searcher = self.raw_whoosh.searcher()
-        self.assertEqual(len(searcher.search(self.parser.parse(u'*'), limit=1000)), 4)
+        self.assertEqual(len(searcher.search(self.parser.parse(u'*'), limit=1000)), 2)
 
         results = SearchQuerySet().filter(SQ(author='daniel') | SQ(editor='daniel'))
 
         self.assertEqual([result.id for result in results], [
             'core.afourthmockmodel.1',
             'core.afourthmockmodel.3',
-            'core.afourthmockmodel.2',
-            'core.afourthmockmodel.4'
         ])
         self.assertEqual(results[0].boost, 1.1)
 
@@ -632,7 +630,7 @@ class LiveWhooshSearchQuerySetTestCase(TestCase):
         self.assertEqual(len(sqs), 2)
 
         sqs = self.sqs.auto_query('Indexed!').filter(pub_date__lte=date(2009, 2, 25)).filter(django_id__in=[1, 2]).exclude(name='daniel1')
-        self.assertEqual(sqs.query.build_query(), u"('Indexed!' AND pub_date:[to 20090225000000] AND (django_id:\"1\" OR django_id:\"2\") AND NOT (name:daniel1))")
+        self.assertEqual(sqs.query.build_query(), u"('Indexed!' AND pub_date:[to 20090225000000] AND django_id:(\"1\" OR \"2\") AND NOT (name:daniel1))")
         self.assertEqual(len(sqs), 1)
 
         sqs = self.sqs.auto_query('re-inker')
@@ -640,15 +638,15 @@ class LiveWhooshSearchQuerySetTestCase(TestCase):
         self.assertEqual(len(sqs), 0)
 
         sqs = self.sqs.auto_query('0.7 wire')
-        self.assertEqual(sqs.query.build_query(), u"('0.7' AND wire)")
+        self.assertEqual(sqs.query.build_query(), u"'0.7' wire")
         self.assertEqual(len(sqs), 0)
 
         sqs = self.sqs.auto_query("daler-rowney pearlescent 'bell bronze'")
-        self.assertEqual(sqs.query.build_query(), u"('daler-rowney' AND pearlescent AND 'bell AND bronze')")
+        self.assertEqual(sqs.query.build_query(), u"'daler-rowney' pearlescent 'bell bronze'")
         self.assertEqual(len(sqs), 0)
 
         sqs = self.sqs.models(MockModel)
-        self.assertEqual(sqs.query.build_query(), u'django_ct:core.mockmodel')
+        self.assertEqual(sqs.query.build_query(), u'*')
         self.assertEqual(len(sqs), 3)
 
     def test_all_regression(self):
@@ -813,11 +811,11 @@ class LiveWhooshMultiSearchQuerySetTestCase(TestCase):
         self.assertEqual(len(sqs), 25)
 
         sqs = self.sqs.models(MockModel)
-        self.assertEqual(sqs.query.build_query(), u'django_ct:core.mockmodel')
+        self.assertEqual(sqs.query.build_query(), u'*')
         self.assertEqual(len(sqs), 23)
 
         sqs = self.sqs.models(AnotherMockModel)
-        self.assertEqual(sqs.query.build_query(), u'django_ct:core.anothermockmodel')
+        self.assertEqual(sqs.query.build_query(), u'*')
         self.assertEqual(len(sqs), 2)
 
 

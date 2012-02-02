@@ -9,10 +9,12 @@ Supported Backends
 ==================
 
 * Solr_
+* Elasticsearch_
 * Whoosh_
 * Xapian_
 
 .. _Solr: http://lucene.apache.org/solr/
+.. _Elasticsearch: http://elasticsearch.org/
 .. _Whoosh: http://whoosh.ca/
 .. _Xapian: http://xapian.org/
 
@@ -32,7 +34,23 @@ Solr
 * Faceting
 * Stored (non-indexed) fields
 * Highlighting
-* Requires: pysolr (2.0.13+) & Solr 1.3+
+* Spatial search
+* Requires: pysolr (2.0.13+) & Solr 3.5+
+
+Elasticsearch
+-------------
+
+**Complete & included with Haystack.**
+
+* Full SearchQuerySet support
+* Automatic query building
+* "More Like This" functionality
+* Term Boosting
+* Faceting
+* Stored (non-indexed) fields
+* Highlighting
+* Spatial search
+* Requires: pyelasticsearch (toastdriven git master) & Elasticsearch 0.17.7+
 
 Whoosh
 ------
@@ -62,15 +80,17 @@ Xapian
 * Backend can be downloaded here: `xapian-haystack <http://github.com/notanumber/xapian-haystack/>`_
 
 
-+----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+
-| Backend        | SearchQuerySet Support | Auto Query Building | More Like This | Term Boost | Faceting | Stored Fields | Highlighting |
-+================+========================+=====================+================+============+==========+===============+==============+
-| Solr           | Yes                    | Yes                 | Yes            | Yes        | Yes      | Yes           | Yes          |
-+----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+
-| Whoosh         | Yes                    | Yes                 | No             | Yes        | No       | Yes           | Yes          |
-+----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+
-| Xapian         | Yes                    | Yes                 | Yes            | Yes        | Yes      | Yes           | Yes (plugin) |
-+----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+
++----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+---------+
+| Backend        | SearchQuerySet Support | Auto Query Building | More Like This | Term Boost | Faceting | Stored Fields | Highlighting | Spatial |
++================+========================+=====================+================+============+==========+===============+==============+=========+
+| Solr           | Yes                    | Yes                 | Yes            | Yes        | Yes      | Yes           | Yes          | Yes     |
++----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+---------+
+| Elasticsearch  | Yes                    | Yes                 | Yes            | Yes        | Yes      | Yes           | Yes          | Yes     |
++----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+---------+
+| Whoosh         | Yes                    | Yes                 | No             | Yes        | No       | Yes           | Yes          | No      |
++----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+---------+
+| Xapian         | Yes                    | Yes                 | Yes            | Yes        | Yes      | Yes           | Yes (plugin) | No      |
++----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+---------+
 
 
 Wishlist
@@ -80,15 +100,21 @@ The following are search backends that would be nice to have in Haystack but are
 licensed in a way that prevents them from being officially bundled. If the
 community expresses interest in any of these, there may be future development.
 
+* Riak_
+* Lupyne_
 * Sphinx_
-* `Hyper Estraier`_
 
+.. _Riak: http://www.basho.com/
+.. _Lupyne: http://code.google.com/p/lupyne/
 .. _Sphinx: http://www.sphinxsearch.com/
-.. _Hyper Estraier: http://hyperestraier.sourceforge.net/
 
 
 Sphinx
 ------
+
+This backend is unlikely to be built. Sphinx is pretty gimpy & doesn't do
+blended search results across all models the way the other engines can.
+Very limited featureset as well.
 
 * Full SearchQuerySet support
 * Automatic query building
@@ -96,20 +122,3 @@ Sphinx
 * Stored (non-indexed) fields
 * Highlighting
 * Requires: sphinxapi.py (Comes with Sphinx)
-
-Hyper Estraier
---------------
-
-* Full SearchQuerySet support
-* Automatic query building
-* "More Like This" functionality
-* Highlighting
-* Requires: SWIG bindings
-
-+----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+
-| Backend        | SearchQuerySet Support | Auto Query Building | More Like This | Term Boost | Faceting | Stored Fields | Highlighting |
-+================+========================+=====================+================+============+==========+===============+==============+
-| Sphinx         | Yes                    | Yes                 | No             | Yes        | No       | Yes           | Yes          |
-+----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+
-| Hyper Estraier | Yes                    | Yes                 | Yes            | No         | No       | No            | Yes (plugin) |
-+----------------+------------------------+---------------------+----------------+------------+----------+---------------+--------------+

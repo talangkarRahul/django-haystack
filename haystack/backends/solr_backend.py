@@ -1,11 +1,12 @@
 import logging
-import sys
+import warnings
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models.loading import get_model
 from haystack.backends import BaseEngine, BaseSearchBackend, BaseSearchQuery, log_query, EmptyResults
 from haystack.constants import ID, DJANGO_CT, DJANGO_ID
 from haystack.exceptions import MissingDependency, MoreLikeThisError
+from haystack.inputs import PythonData, Clean, Exact
 from haystack.models import SearchResult
 from haystack.utils import get_identifier
 try:
@@ -107,7 +108,8 @@ class SolrSearchBackend(BaseSearchBackend):
     @log_query
     def search(self, query_string, sort_by=None, start_offset=0, end_offset=None,
                fields='', highlight=False, facets=None, date_facets=None, query_facets=None,
-               narrow_queries=None, spelling_query=None,
+               narrow_queries=None, spelling_query=None, within=None,
+               dwithin=None, distance_point=None, models=None,
                limit_to_registered_models=None, result_class=None, **kwargs):
         if len(query_string) == 0:
             return {
@@ -118,12 +120,32 @@ class SolrSearchBackend(BaseSearchBackend):
         kwargs = {
             'fl': '* score',
         }
+        geo_sort = False
 
         if fields:
+            if isinstance(fields, (list, set)):
+                fields = " ".join(fields)
+
             kwargs['fl'] = fields
 
         if sort_by is not None:
-            kwargs['sort'] = sort_by
+            if sort_by in ['distance asc', 'distance desc'] and distance_point:
+                # Do the geo-enabled sort.
+                lng, lat = distance_point['point'].get_coords()
+                kwargs['sfield'] = distance_point['field']
+                kwargs['pt'] = '%s,%s' % (lat, lng)
+                geo_sort = True
+
+                if sort_by == 'distance asc':
+                    kwargs['sort'] = 'geodist() asc'
+                else:
+                    kwargs['sort'] = 'geodist() desc'
+            else:
+                if sort_by.startswith('distance '):
+                    warnings.warn("In order to sort by distance, you must call the '.distance(...)' method.")
+
+                # Regular sorting.
+                kwargs['sort'] = sort_by
 
         if start_offset is not None:
             kwargs['start'] = start_offset
@@ -170,19 +192,50 @@ class SolrSearchBackend(BaseSearchBackend):
         if limit_to_registered_models is None:
             limit_to_registered_models = getattr(settings, 'HAYSTACK_LIMIT_TO_REGISTERED_MODELS', True)
 
-        if limit_to_registered_models:
+        if models and len(models):
+            model_choices = sorted(['%s.%s' % (model._meta.app_label, model._meta.module_name) for model in models])
+        elif limit_to_registered_models:
             # Using narrow queries, limit the results to only models handled
             # with the current routers.
+            model_choices = self.build_models_list()
+        else:
+            model_choices = []
+
+        if len(model_choices) > 0:
             if narrow_queries is None:
                 narrow_queries = set()
 
-            registered_models = self.build_models_list()
-
-            if len(registered_models) > 0:
-                narrow_queries.add('%s:(%s)' % (DJANGO_CT, ' OR '.join(registered_models)))
+            narrow_queries.add('%s:(%s)' % (DJANGO_CT, ' OR '.join(model_choices)))
 
         if narrow_queries is not None:
             kwargs['fq'] = list(narrow_queries)
+
+        if within is not None:
+            from haystack.utils.geo import generate_bounding_box
+
+            kwargs.setdefault('fq', [])
+            ((min_lat, min_lng), (max_lat, max_lng)) = generate_bounding_box(within['point_1'], within['point_2'])
+            # Bounding boxes are min, min TO max, max. Solr's wiki was *NOT*
+            # very clear on this.
+            bbox = '%s:[%s,%s TO %s,%s]' % (within['field'], min_lat, min_lng, max_lat, max_lng)
+            kwargs['fq'].append(bbox)
+
+        if dwithin is not None:
+            kwargs.setdefault('fq', [])
+            lng, lat = dwithin['point'].get_coords()
+            geofilt = '{!geofilt pt=%s,%s sfield=%s d=%s}' % (lat, lng, dwithin['field'], dwithin['distance'].km)
+            kwargs['fq'].append(geofilt)
+
+        # Check to see if the backend should try to include distances
+        # (Solr 4.X+) in the results.
+        if self.distance_available and distance_point:
+            # In early testing, you can't just hand Solr 4.X a proper bounding box
+            # & request distances. To enable native distance would take calculating
+            # a center point & a radius off the user-provided box, which kinda
+            # sucks. We'll avoid it for now, since Solr 4.x's release will be some
+            # time yet.
+            # kwargs['fl'] += ' _dist_:geodist()'
+            pass
 
         try:
             raw_results = self.conn.search(query_string, **kwargs)
@@ -193,10 +246,10 @@ class SolrSearchBackend(BaseSearchBackend):
             self.log.error("Failed to query Solr using '%s': %s", query_string, e)
             raw_results = EmptyResults()
 
-        return self._process_results(raw_results, highlight=highlight, result_class=result_class)
+        return self._process_results(raw_results, highlight=highlight, result_class=result_class, distance_point=distance_point)
 
     def more_like_this(self, model_instance, additional_query_string=None,
-                       start_offset=0, end_offset=None,
+                       start_offset=0, end_offset=None, models=None,
                        limit_to_registered_models=None, result_class=None, **kwargs):
         from haystack import connections
 
@@ -223,16 +276,20 @@ class SolrSearchBackend(BaseSearchBackend):
         if limit_to_registered_models is None:
             limit_to_registered_models = getattr(settings, 'HAYSTACK_LIMIT_TO_REGISTERED_MODELS', True)
 
-        if limit_to_registered_models:
+        if models and len(models):
+            model_choices = sorted(['%s.%s' % (model._meta.app_label, model._meta.module_name) for model in models])
+        elif limit_to_registered_models:
             # Using narrow queries, limit the results to only models handled
             # with the current routers.
+            model_choices = self.build_models_list()
+        else:
+            model_choices = []
+
+        if len(model_choices) > 0:
             if narrow_queries is None:
                 narrow_queries = set()
 
-            registered_models = self.build_models_list()
-
-            if len(registered_models) > 0:
-                narrow_queries.add('%s:(%s)' % (DJANGO_CT, ' OR '.join(registered_models)))
+            narrow_queries.add('%s:(%s)' % (DJANGO_CT, ' OR '.join(model_choices)))
 
         if additional_query_string:
             narrow_queries.add(additional_query_string)
@@ -253,7 +310,7 @@ class SolrSearchBackend(BaseSearchBackend):
 
         return self._process_results(raw_results, result_class=result_class)
 
-    def _process_results(self, raw_results, highlight=False, result_class=None):
+    def _process_results(self, raw_results, highlight=False, result_class=None, distance_point=None):
         from haystack import connections
         results = []
         hits = raw_results.hits
@@ -308,6 +365,15 @@ class SolrSearchBackend(BaseSearchBackend):
                 if raw_result[ID] in getattr(raw_results, 'highlighting', {}):
                     additional_fields['highlighted'] = raw_results.highlighting[raw_result[ID]]
 
+                if distance_point:
+                    additional_fields['_point_of_origin'] = distance_point
+
+                    if raw_result.get('__dist__'):
+                        from haystack.utils.geo import Distance
+                        additional_fields['_distance'] = Distance(km=float(raw_result['__dist__']))
+                    else:
+                        additional_fields['_distance'] = None
+
                 result = result_class(app_label, model_name, raw_result[DJANGO_ID], raw_result['score'], **additional_fields)
                 results.append(result)
             else:
@@ -327,7 +393,7 @@ class SolrSearchBackend(BaseSearchBackend):
         for field_name, field_class in fields.items():
             field_data = {
                 'field_name': field_class.index_fieldname,
-                'type': 'text',
+                'type': 'text_en',
                 'indexed': 'true',
                 'stored': 'true',
                 'multi_valued': 'false',
@@ -342,15 +408,17 @@ class SolrSearchBackend(BaseSearchBackend):
             if field_class.field_type in ['date', 'datetime']:
                 field_data['type'] = 'date'
             elif field_class.field_type == 'integer':
-                field_data['type'] = 'slong'
+                field_data['type'] = 'long'
             elif field_class.field_type == 'float':
-                field_data['type'] = 'sfloat'
+                field_data['type'] = 'float'
             elif field_class.field_type == 'boolean':
                 field_data['type'] = 'boolean'
             elif field_class.field_type == 'ngram':
                 field_data['type'] = 'ngram'
             elif field_class.field_type == 'edge_ngram':
                 field_data['type'] = 'edge_ngram'
+            elif field_class.field_type == 'location':
+                field_data['type'] = 'location'
 
             if field_class.is_multivalued:
                 field_data['multi_valued'] = 'true'
@@ -364,13 +432,13 @@ class SolrSearchBackend(BaseSearchBackend):
 
                 # If it's text and not being indexed, we probably don't want
                 # to do the normal lowercase/tokenize/stemming/etc. dance.
-                if field_data['type'] == 'text':
+                if field_data['type'] == 'text_en':
                     field_data['type'] = 'string'
 
             # If it's a ``FacetField``, make sure we don't postprocess it.
             if hasattr(field_class, 'facet_for'):
                 # If it's text, it ought to be a string.
-                if field_data['type'] == 'text':
+                if field_data['type'] == 'text_en':
                     field_data['type'] = 'string'
 
             schema_fields.append(field_data)
@@ -414,61 +482,132 @@ class SolrSearchQuery(BaseSearchQuery):
     def matching_all_fragment(self):
         return '*:*'
 
+    def add_spatial(self, lat, lon, sfield, distance, filter='bbox'):
+        """Adds spatial query parameters to search query"""
+        kwargs = {
+            'lat': lat,
+            'long': long,
+            'sfield': sfield,
+            'distance': distance,
+        }
+        self.spatial_query.update(kwargs)
+
+    def add_order_by_distance(self, lat, long, sfield):
+        """Orders the search result by distance from point."""
+        kwargs = {
+            'lat': lat,
+            'long': long,
+            'sfield': sfield,
+        }
+        self.order_by_distance.update(kwargs)
+
     def build_query_fragment(self, field, filter_type, value):
         from haystack import connections
-        result = ''
+        query_frag = ''
 
-        # Handle when we've got a ``ValuesListQuerySet``...
-        if hasattr(value, 'values_list'):
-            value = list(value)
+        if not hasattr(value, 'input_type_name'):
+            # Handle when we've got a ``ValuesListQuerySet``...
+            if hasattr(value, 'values_list'):
+                value = list(value)
 
-        if not isinstance(value, (set, list, tuple)):
-            # Convert whatever we find to what pysolr wants.
-            value = self.backend.conn._from_python(value)
+            if isinstance(value, basestring):
+                # It's not an ``InputType``. Assume ``Clean``.
+                value = Clean(value)
+            else:
+                value = PythonData(value)
 
-        index_fieldname = connections[self._using].get_unified_index().get_index_fieldname(field)
+        # Prepare the query using the InputType.
+        prepared_value = value.prepare(self)
 
-        filter_types = {
-            'contains': u'%s:%s',
-            'exact': u'%s:"%s"',
-            'gt': u'%s:{"%s" TO *}',
-            'gte': u'%s:["%s" TO *]',
-            'lt': u'%s:{* TO "%s"}',
-            'lte': u'%s:[* TO "%s"]',
-            'startswith': u"%s:%s*",
-        }
-
-        if filter_type == 'in':
-            in_options = []
-
-            for possible_value in value:
-                in_options.append(u'%s:"%s"' % (index_fieldname, self.backend.conn._from_python(possible_value)))
-
-            result = u"(%s)" % " OR ".join(in_options)
-        elif filter_type == 'range':
-            start = self.backend.conn._from_python(value[0])
-            end = self.backend.conn._from_python(value[1])
-            return u'%s:["%s" TO "%s"]' % (index_fieldname, start, end)
-        else:
-            result = filter_types[filter_type] % (index_fieldname, value)
+        if not isinstance(prepared_value, (set, list, tuple)):
+            # Then convert whatever we get back to what pysolr wants if needed.
+            prepared_value = self.backend.conn._from_python(prepared_value)
 
         # 'content' is a special reserved word, much like 'pk' in
         # Django's ORM layer. It indicates 'no special field'.
         if field == 'content':
-            result = result.replace('content:', '')
+            index_fieldname = ''
+        else:
+            index_fieldname = u'%s:' % connections[self._using].get_unified_index().get_index_fieldname(field)
 
-        return result
+        filter_types = {
+            'contains': u'%s',
+            'startswith': u'%s*',
+            'exact': u'%s',
+            'gt': u'{%s TO *}',
+            'gte': u'[%s TO *]',
+            'lt': u'{* TO %s}',
+            'lte': u'[* TO %s]',
+        }
 
-    def run(self, spelling_query=None):
+        if value.post_process is False:
+            query_frag = prepared_value
+        else:
+            if filter_type in ['contains', 'startswith']:
+                if value.input_type_name == 'exact':
+                    query_frag = prepared_value
+                else:
+                    # Iterate over terms & incorportate the converted form of each into the query.
+                    terms = []
+
+                    for possible_value in prepared_value.split(' '):
+                        terms.append(filter_types[filter_type] % self.backend.conn._from_python(possible_value))
+
+                    if len(terms) == 1:
+                        query_frag = terms[0]
+                    else:
+                        query_frag = u"(%s)" % " AND ".join(terms)
+            elif filter_type == 'in':
+                in_options = []
+
+                for possible_value in prepared_value:
+                    in_options.append(u'"%s"' % self.backend.conn._from_python(possible_value))
+
+                query_frag = u"(%s)" % " OR ".join(in_options)
+            elif filter_type == 'range':
+                start = self.backend.conn._from_python(prepared_value[0])
+                end = self.backend.conn._from_python(prepared_value[1])
+                query_frag = u'["%s" TO "%s"]' % (start, end)
+            elif filter_type == 'exact':
+                if value.input_type_name == 'exact':
+                    query_frag = prepared_value
+                else:
+                    prepared_value = Exact(prepared_value).prepare(self)
+                    query_frag = filter_types[filter_type] % prepared_value
+            else:
+                if value.input_type_name != 'exact':
+                    prepared_value = Exact(prepared_value).prepare(self)
+
+                query_frag = filter_types[filter_type] % prepared_value
+
+        return u"%s%s" % (index_fieldname, query_frag)
+
+    def build_alt_parser_query(self, parser_name, query_string='', **kwargs):
+        if query_string:
+            kwargs['v'] = query_string
+
+        kwarg_bits = []
+
+        for key in sorted(kwargs.keys()):
+            if isinstance(kwargs[key], basestring) and ' ' in kwargs[key]:
+                kwarg_bits.append(u"%s='%s'" % (key, kwargs[key]))
+            else:
+                kwarg_bits.append(u"%s=%s" % (key, kwargs[key]))
+
+        return u"{!%s %s}" % (parser_name, ' '.join(kwarg_bits))
+
+    def run(self, spelling_query=None, **kwargs):
         """Builds and executes the query. Returns a list of search results."""
         final_query = self.build_query()
-        kwargs = {
+        search_kwargs = {
             'start_offset': self.start_offset,
             'result_class': self.result_class,
         }
+        order_by_list = None
 
         if self.order_by:
-            order_by_list = []
+            if order_by_list is None:
+                order_by_list = []
 
             for order_by in self.order_by:
                 if order_by.startswith('-'):
@@ -476,50 +615,65 @@ class SolrSearchQuery(BaseSearchQuery):
                 else:
                     order_by_list.append('%s asc' % order_by)
 
-            kwargs['sort_by'] = ", ".join(order_by_list)
+            search_kwargs['sort_by'] = ", ".join(order_by_list)
 
         if self.end_offset is not None:
-            kwargs['end_offset'] = self.end_offset
+            search_kwargs['end_offset'] = self.end_offset
 
         if self.highlight:
-            kwargs['highlight'] = self.highlight
+            search_kwargs['highlight'] = self.highlight
 
         if self.facets:
-            kwargs['facets'] = list(self.facets)
+            search_kwargs['facets'] = list(self.facets)
 
         if self.date_facets:
-            kwargs['date_facets'] = self.date_facets
+            search_kwargs['date_facets'] = self.date_facets
 
         if self.query_facets:
-            kwargs['query_facets'] = self.query_facets
+            search_kwargs['query_facets'] = self.query_facets
 
         if self.narrow_queries:
-            kwargs['narrow_queries'] = self.narrow_queries
+            search_kwargs['narrow_queries'] = self.narrow_queries
+
+        if self.fields:
+            search_kwargs['fields'] = self.fields
+
+        if self.models:
+            search_kwargs['models'] = self.models
 
         if spelling_query:
-            kwargs['spelling_query'] = spelling_query
+            search_kwargs['spelling_query'] = spelling_query
 
-        results = self.backend.search(final_query, **kwargs)
+        if self.within:
+            search_kwargs['within'] = self.within
+
+        if self.dwithin:
+            search_kwargs['dwithin'] = self.dwithin
+
+        if self.distance_point:
+            search_kwargs['distance_point'] = self.distance_point
+
+        results = self.backend.search(final_query, **search_kwargs)
         self._results = results.get('results', [])
         self._hit_count = results.get('hits', 0)
         self._facet_counts = self.post_process_facets(results)
         self._spelling_suggestion = results.get('spelling_suggestion', None)
 
-    def run_mlt(self):
+    def run_mlt(self, **kwargs):
         """Builds and executes the query. Returns a list of search results."""
         if self._more_like_this is False or self._mlt_instance is None:
             raise MoreLikeThisError("No instance was provided to determine 'More Like This' results.")
 
         additional_query_string = self.build_query()
-        kwargs = {
+        search_kwargs = {
             'start_offset': self.start_offset,
             'result_class': self.result_class,
         }
 
         if self.end_offset is not None:
-            kwargs['end_offset'] = self.end_offset - self.start_offset
+            search_kwargs['end_offset'] = self.end_offset - self.start_offset
 
-        results = self.backend.more_like_this(self._mlt_instance, additional_query_string, **kwargs)
+        results = self.backend.more_like_this(self._mlt_instance, additional_query_string, **search_kwargs)
         self._results = results.get('results', [])
         self._hit_count = results.get('hits', 0)
 

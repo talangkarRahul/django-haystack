@@ -9,20 +9,31 @@ Solr
 
 Official Download Location: http://www.apache.org/dyn/closer.cgi/lucene/solr/
 
-Solr is Java but comes in a pre=packaged form that requires very little other
+Solr is Java but comes in a pre-packaged form that requires very little other
 than the JRE and Jetty. It's very performant and has an advanced featureset.
-Haystack requires Solr 1.3+. Installation is relatively simple::
+Haystack suggests using Solr 3.5+, though it's possible to get it working on
+Solr 1.4 with a little effort. Installation is relatively simple::
 
-    curl -O http://apache.mirrors.tds.net/lucene/solr/1.4.1/apache-solr-1.4.1.tgz
-    tar xvzf apache-solr-1.4.1.tgz
-    cd apache-solr-1.4.1
+    curl -O http://apache.mirrors.tds.net/lucene/solr/3.5.0/apache-solr-3.5.0.tgz
+    tar xvzf apache-solr-3.5.0.tgz
+    cd apache-solr-3.5.0
     cd example
     java -jar start.jar
 
 You'll need to revise your schema. You can generate this from your application
 (once Haystack is installed and setup) by running
 ``./manage.py build_solr_schema``. Take the output from that command and place
-it in ``apache-solr-1.4.1/example/solr/conf/schema.xml``. Then restart Solr.
+it in ``apache-solr-3.5.0/example/solr/conf/schema.xml``. Then restart Solr.
+
+.. note::
+    ``build_solr_schema`` uses a template to generate ``schema.xml``. Haystack
+    provides a default template using some sensible defaults. If you would like
+    to provide your own template, you will need to place it in
+    ``search_configuration/solr.xml``, inside a directory specified by your app's
+    ``TEMPLATE_DIRS`` setting.
+
+    Example: ``/myproj/myapp/templates/search_configuration/solr.xml``
+    
 
 You'll also need a Solr binding, ``pysolr``. The official ``pysolr`` package,
 distributed via PyPI, is the best version to use (2.1.0+). Place ``pysolr.py``
@@ -52,14 +63,14 @@ To enable the spelling suggestion functionality in Haystack, you'll need to
 enable the ``SpellCheckComponent``.
 
 The first thing to do is create a special field on your ``SearchIndex`` class
-that mirrors the ``text`` field, but has ``indexed=False`` on it. This disables
+that mirrors the ``text`` field, but uses ``FacetCharField``. This disables
 the post-processing that Solr does, which can mess up your suggestions.
 Something like the following is suggested::
 
     class MySearchIndex(indexes.SearchIndex, indexes.Indexable):
         text = indexes.CharField(document=True, use_template=True)
         # ... normal fields then...
-        suggestions = indexes.CharField()
+        suggestions = indexes.FacetCharField()
 
         def prepare(self, obj):
             prepared_data = super(NoteIndex, self).prepare(object)
@@ -96,6 +107,62 @@ Then change your default handler from::
 Be warned that the ``<str name="field">suggestions</str>`` portion will be specific to
 your ``SearchIndex`` classes (in this case, assuming the main field is called
 ``text``).
+
+
+Elasticsearch
+=============
+
+Official Download Location: http://www.elasticsearch.org/download/
+
+Elasticsearch is Java but comes in a pre-packaged form that requires very
+little other than the JRE. It's also very performant, scales easily and has
+an advanced featureset. Haystack requires at least version 0.17.7 (0.18.6 is
+current as of writing). Installation is best done using a package manager::
+
+    # On Mac OS X...
+    brew install elasticsearch
+
+    # On Ubuntu...
+    apt-get install elasticsearch
+
+    # Then start via:
+    elasticsearch -f -D es.config=<path to YAML config>
+
+    # Example:
+    elasticsearch -f -D es.config=/usr/local/Cellar/elasticsearch/0.17.7/config/elasticsearch.yml
+
+You may have to alter the configuration to run on ``localhost`` when developing
+locally. Modifications should be done in a YAML file, the stock one being
+``config/elasticsearch.yml``::
+
+    # Unicast Discovery (disable multicast)
+    discovery.zen.ping.multicast.enabled: false
+    discovery.zen.ping.unicast.hosts: ["127.0.0.1"]
+
+    # Name your cluster here to whatever.
+    # My machine is called "Venus", so...
+    cluster:
+      name: venus
+
+    network:
+      host: 127.0.0.1
+
+    path:
+      logs: /usr/local/var/log
+      data: /usr/local/var/data
+
+You'll also need an Elasticsearch binding, ``pyelasticsearch`` (**NOT** ``pyes``).
+The unofficial, Haystack-compatible ``pyelasticsearch`` package,
+hosted on GitHub_, is the best version to use. Place ``pyelasticsearch.py``
+somewhere on your ``PYTHONPATH`` (usually ``python setup.py install``).
+
+.. _GitHub: https://github.com/toastdriven/pyelasticsearch
+
+.. note::
+
+    ``pyelasticsearch`` has it's own dependencies that aren't covered by
+    Haystack. You'll also need ``requests`` & ``simplejson`` for speedier
+    JSON construction/parsing.
 
 
 Whoosh

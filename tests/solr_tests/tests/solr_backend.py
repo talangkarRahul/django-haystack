@@ -12,7 +12,8 @@ from haystack import indexes
 from haystack.models import SearchResult
 from haystack.query import SearchQuerySet, RelatedSearchQuerySet, SQ
 from haystack.utils.loading import UnifiedIndex
-from core.models import MockModel, AnotherMockModel, AFourthMockModel
+from core.models import (MockModel, AnotherMockModel,
+                         AFourthMockModel, ASixthMockModel)
 from core.tests.mocks import MockSearchResult
 
 test_pickling = True
@@ -146,6 +147,17 @@ class SolrAutocompleteMockModelSearchIndex(indexes.SearchIndex, indexes.Indexabl
         return MockModel
 
 
+class SolrSpatialSearchIndex(indexes.SearchIndex, indexes.Indexable):
+    text = indexes.CharField(model_attr='name', document=True)
+    location = indexes.LocationField()
+
+    def prepare_location(self, obj):
+        return "%s,%s" % (obj.lat, obj.lon)
+
+    def get_model(self):
+        return ASixthMockModel
+
+
 class SolrSearchBackendTestCase(TestCase):
     def setUp(self):
         super(SolrSearchBackendTestCase, self).setUp()
@@ -177,7 +189,7 @@ class SolrSearchBackendTestCase(TestCase):
         super(SolrSearchBackendTestCase, self).tearDown()
 
     def test_non_silent(self):
-        bad_sb = connections['default'].backend('bad', URL='http://omg.wtf.bbq:1000/solr', SILENTLY_FAIL=False)
+        bad_sb = connections['default'].backend('bad', URL='http://omg.wtf.bbq:1000/solr', SILENTLY_FAIL=False, TIMEOUT=1)
 
         try:
             bad_sb.update(self.smmi, self.sample_objs)
@@ -360,7 +372,7 @@ class SolrSearchBackendTestCase(TestCase):
         self.assertEqual(fields, [
             {
                 'indexed': 'true',
-                'type': 'text',
+                'type': 'text_en',
                 'stored': 'true',
                 'field_name': 'text',
                 'multi_valued': 'false'
@@ -374,7 +386,7 @@ class SolrSearchBackendTestCase(TestCase):
             },
             {
                 'indexed': 'true',
-                'type': 'text',
+                'type': 'text_en',
                 'stored': 'true',
                 'field_name': 'name',
                 'multi_valued': 'false'
@@ -400,14 +412,14 @@ class SolrSearchBackendTestCase(TestCase):
                 'indexed': 'true',
                 'multi_valued': 'false',
                 'stored': 'true',
-                'type': 'sfloat'
+                'type': 'float'
             },
             {
                 'field_name': 'average_rating_exact',
                 'indexed': 'true',
                 'multi_valued': 'false',
                 'stored': 'true',
-                'type': 'sfloat'
+                'type': 'float'
             },
             {
                 'field_name': 'created',
@@ -442,7 +454,7 @@ class SolrSearchBackendTestCase(TestCase):
                 'indexed': 'true',
                 'multi_valued': 'false',
                 'stored': 'true',
-                'type': 'text'
+                'type': 'text_en'
             },
             {
                 'field_name': 'name_exact',
@@ -456,14 +468,14 @@ class SolrSearchBackendTestCase(TestCase):
                 'indexed': 'true',
                 'multi_valued': 'false',
                 'stored': 'true',
-                'type': 'slong'
+                'type': 'long'
             },
             {
                 'field_name': 'post_count_i',
                 'indexed': 'true',
                 'multi_valued': 'false',
                 'stored': 'true',
-                'type': 'slong'
+                'type': 'long'
             },
             {
                 'field_name': 'pub_date',
@@ -484,7 +496,7 @@ class SolrSearchBackendTestCase(TestCase):
                 'indexed': 'true',
                 'multi_valued': 'true',
                 'stored': 'true',
-                'type': 'text'
+                'type': 'text_en'
             },
             {
                 'field_name': 'sites_exact',
@@ -498,7 +510,7 @@ class SolrSearchBackendTestCase(TestCase):
                 'indexed': 'true',
                 'multi_valued': 'false',
                 'stored': 'true',
-                'type': 'text'
+                'type': 'text_en'
             }
         ])
 
@@ -788,7 +800,7 @@ class LiveSolrSearchQuerySetTestCase(TestCase):
         # This will break horrifically if escaping isn't working.
         sqs = self.sqs.auto_query('"pants:rule"')
         self.assertTrue(isinstance(sqs, SearchQuerySet))
-        self.assertEqual(repr(sqs.query.query_filter), '<SQ: AND content__exact=pants\\:rule>')
+        self.assertEqual(repr(sqs.query.query_filter), '<SQ: AND content__contains="pants:rule">')
         self.assertEqual(sqs.query.build_query(), u'"pants\\:rule"')
         self.assertEqual(len(sqs), 0)
 
@@ -901,9 +913,9 @@ class LiveSolrSearchQuerySetTestCase(TestCase):
         self.assertEqual(len(connections['default'].queries), 5)
 
     def test_quotes_regression(self):
-        sqs = self.sqs.auto_query("44°48'40''N 20°28'32''E")
+        sqs = self.sqs.auto_query(u"44°48'40''N 20°28'32''E")
         # Should not have empty terms.
-        self.assertEqual(sqs.query.build_query(), u"(44\ufffd\ufffd48'40''N AND 20\ufffd\ufffd28'32''E)")
+        self.assertEqual(sqs.query.build_query(), u"44\xb048'40''N 20\xb028'32''E")
         # Should not cause Solr to 500.
         self.assertEqual(sqs.count(), 0)
 
@@ -911,40 +923,40 @@ class LiveSolrSearchQuerySetTestCase(TestCase):
         self.assertEqual(sqs.query.build_query(), u'blazing')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('blazing saddles')
-        self.assertEqual(sqs.query.build_query(), u'(blazing AND saddles)')
+        self.assertEqual(sqs.query.build_query(), u'blazing saddles')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('"blazing saddles')
-        self.assertEqual(sqs.query.build_query(), u'(\\"blazing AND saddles)')
+        self.assertEqual(sqs.query.build_query(), u'\\"blazing saddles')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('"blazing saddles"')
         self.assertEqual(sqs.query.build_query(), u'"blazing saddles"')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('mel "blazing saddles"')
-        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel)')
+        self.assertEqual(sqs.query.build_query(), u'mel "blazing saddles"')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('mel "blazing \'saddles"')
-        self.assertEqual(sqs.query.build_query(), u'("blazing \'saddles" AND mel)')
+        self.assertEqual(sqs.query.build_query(), u'mel "blazing \'saddles"')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('mel "blazing \'\'saddles"')
-        self.assertEqual(sqs.query.build_query(), u'("blazing \'\'saddles" AND mel)')
+        self.assertEqual(sqs.query.build_query(), u'mel "blazing \'\'saddles"')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('mel "blazing \'\'saddles"\'')
-        self.assertEqual(sqs.query.build_query(), u'("blazing \'\'saddles" AND mel AND \')')
+        self.assertEqual(sqs.query.build_query(), u'mel "blazing \'\'saddles" \'')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('mel "blazing \'\'saddles"\'"')
-        self.assertEqual(sqs.query.build_query(), u'("blazing \'\'saddles" AND mel AND \'\\")')
+        self.assertEqual(sqs.query.build_query(), u'mel "blazing \'\'saddles" \'\\"')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('"blazing saddles" mel')
-        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel)')
+        self.assertEqual(sqs.query.build_query(), u'"blazing saddles" mel')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('"blazing saddles" mel brooks')
-        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel AND brooks)')
+        self.assertEqual(sqs.query.build_query(), u'"blazing saddles" mel brooks')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('mel "blazing saddles" brooks')
-        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel AND brooks)')
+        self.assertEqual(sqs.query.build_query(), u'mel "blazing saddles" brooks')
         self.assertEqual(sqs.count(), 0)
         sqs = self.sqs.auto_query('mel "blazing saddles" "brooks')
-        self.assertEqual(sqs.query.build_query(), u'("blazing saddles" AND mel AND \\"brooks)')
+        self.assertEqual(sqs.query.build_query(), u'mel "blazing saddles" \\"brooks')
         self.assertEqual(sqs.count(), 0)
 
     def test_result_class(self):
@@ -990,19 +1002,19 @@ class LiveSolrMoreLikeThisTestCase(TestCase):
 
     def test_more_like_this(self):
         mlt = self.sqs.more_like_this(MockModel.objects.get(pk=1))
-        self.assertEqual(mlt.count(), 24)
-        self.assertEqual([result.pk for result in mlt], ['6', '14', '4', '10', '22', '5', '3', '12', '2', '23', '18', '19', '13', '7', '15', '21', '9', '1', '2', '20', '16', '17', '8', '11'])
-        self.assertEqual(len([result.pk for result in mlt]), 24)
+        self.assertEqual(mlt.count(), 22)
+        self.assertEqual([result.pk for result in mlt], ['14', '6', '10', '22', '4', '5', '3', '12', '2', '19', '18', '13', '15', '21', '7', '23', '20', '9', '1', '2', '17', '16'])
+        self.assertEqual(len([result.pk for result in mlt]), 22)
 
         alt_mlt = self.sqs.filter(name='daniel3').more_like_this(MockModel.objects.get(pk=3))
-        self.assertEqual(alt_mlt.count(), 10)
-        self.assertEqual([result.pk for result in alt_mlt], ['23', '13', '17', '16', '22', '19', '4', '10', '1', '2'])
-        self.assertEqual(len([result.pk for result in alt_mlt]), 10)
+        self.assertEqual(alt_mlt.count(), 8)
+        self.assertEqual([result.pk for result in alt_mlt], ['17', '16', '19', '23', '22', '13', '1', '2'])
+        self.assertEqual(len([result.pk for result in alt_mlt]), 8)
 
         alt_mlt_with_models = self.sqs.models(MockModel).more_like_this(MockModel.objects.get(pk=1))
-        self.assertEqual(alt_mlt_with_models.count(), 22)
-        self.assertEqual([result.pk for result in alt_mlt_with_models], ['6', '14', '4', '10', '22', '5', '3', '12', '2', '23', '18', '19', '13', '7', '15', '21', '9', '20', '16', '17', '8', '11'])
-        self.assertEqual(len([result.pk for result in alt_mlt_with_models]), 22)
+        self.assertEqual(alt_mlt_with_models.count(), 20)
+        self.assertEqual([result.pk for result in alt_mlt_with_models], ['14', '6', '10', '22', '4', '5', '3', '12', '2', '19', '18', '13', '15', '21', '7', '23', '20', '9', '17', '16'])
+        self.assertEqual(len([result.pk for result in alt_mlt_with_models]), 20)
 
         if hasattr(MockModel.objects, 'defer'):
             # Make sure MLT works with deferred bits.
@@ -1228,4 +1240,3 @@ class LiveSolrContentExtractionTestCase(TestCase):
         self.assertTrue("haystack" in data['contents'])
         self.assertEqual(data['metadata']['Content-Type'], [u'application/pdf'])
         self.assertTrue(any(i for i in data['metadata']['Keywords'] if 'SolrCell' in i))
-
