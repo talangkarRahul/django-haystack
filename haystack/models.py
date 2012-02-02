@@ -64,18 +64,18 @@ class SearchResult(object):
     def _get_object(self):
         if self._object is None:
             if self.model is None:
-                self.log.error("Model could not be found for SearchResult '%s'." % self)
+                self.log.error("Model could not be found for SearchResult '%s'.", self)
                 return None
             
             try:
                 try:
                     self._object = self.searchindex.read_queryset().get(pk=self.pk)
                 except NotRegistered:
-                    self.log.warning("Model not registered with search site '%s.%s'." % (self.app_label, self.model_name))
+                    self.log.warning("Model not registered with search site '%s.%s'.", self.app_label, self.model_name)
                     # Revert to old behaviour
                     self._object = self.model._default_manager.get(pk=self.pk)
             except ObjectDoesNotExist:
-                self.log.error("Object could not be found in database for SearchResult '%s'." % self)
+                self.log.error("Object could not be found in database for SearchResult '%s'.", self)
                 self._object = None
         
         return self._object
@@ -98,7 +98,7 @@ class SearchResult(object):
     
     def _get_verbose_name(self):
         if self.model is None:
-            self.log.error("Model could not be found for SearchResult '%s'." % self)
+            self.log.error("Model could not be found for SearchResult '%s'.", self)
             return u''
         
         return force_unicode(capfirst(self.model._meta.verbose_name))
@@ -107,7 +107,7 @@ class SearchResult(object):
     
     def _get_verbose_name_plural(self):
         if self.model is None:
-            self.log.error("Model could not be found for SearchResult '%s'." % self)
+            self.log.error("Model could not be found for SearchResult '%s'.", self)
             return u''
         
         return force_unicode(capfirst(self.model._meta.verbose_name_plural))
@@ -117,7 +117,7 @@ class SearchResult(object):
     def content_type(self):
         """Returns the content type for the result's model instance."""
         if self.model is None:
-            self.log.error("Model could not be found for SearchResult '%s'." % self)
+            self.log.error("Model could not be found for SearchResult '%s'.", self)
             return u''
         
         return unicode(self.model._meta)
