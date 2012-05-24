@@ -2,6 +2,7 @@ import datetime
 import os
 import warnings
 from optparse import make_option
+from django import db
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import LabelCommand
@@ -28,6 +29,7 @@ def worker(bits):
         # out connections (via ``... = {}``) destroys in-memory DBs.
         if not 'sqlite3' in info['ENGINE']:
             try:
+                db.close_connection()
                 del(connections._connections[alias])
             except KeyError:
                 pass
@@ -44,44 +46,10 @@ def worker(bits):
     backend = haystack_connections[using].get_backend()
 
     if func == 'do_update':
-        qs = build_queryset(index, model, start_date=start_date, end_date=end_date, verbosity=verbosity)
+        qs = index.build_queryset(start_date=start_date, end_date=end_date)
         do_update(backend, index, qs, start, end, total, verbosity=verbosity)
     elif bits[0] == 'do_remove':
         do_remove(backend, index, model, pks_seen, start, upper_bound, verbosity=verbosity)
-
-
-def build_queryset(index, model, start_date=None, end_date=None, verbosity=1):
-    extra_lookup_kwargs = {}
-    updated_field = index.get_updated_field()
-
-    if start_date:
-        if updated_field:
-            extra_lookup_kwargs['%s__gte' % updated_field] = start_date
-        else:
-            if verbosity >= 2:
-                print "No updated date field found for '%s' - not restricting by age." % model.__name__
-
-    if end_date:
-        if updated_field:
-            extra_lookup_kwargs['%s__lte' % updated_field] = end_date
-        else:
-            if verbosity >= 2:
-                print "No updated date field found for '%s' - not restricting by age." % model.__name__
-
-    index_qs = None
-
-    if hasattr(index, 'get_queryset'):
-        warnings.warn("'SearchIndex.get_queryset' was deprecated in Haystack v2. Please rename the method 'index_queryset'.")
-        index_qs = index.get_queryset()
-    else:
-        index_qs = index.index_queryset()
-
-    if not hasattr(index_qs, 'filter'):
-        raise ImproperlyConfigured("The '%r' class must return a 'QuerySet' in the 'index_queryset' method." % index)
-
-    # `.select_related()` seems like a good idea here but can fail on
-    # nullable `ForeignKey` as well as what seems like other cases.
-    return index_qs.filter(**extra_lookup_kwargs).order_by(model._meta.pk.name)
 
 
 def do_update(backend, index, qs, start, end, total, verbosity=1):
@@ -238,7 +206,11 @@ class Command(LabelCommand):
                     print "Skipping '%s' - no index." % model
                 continue
 
-            qs = build_queryset(index, model, start_date=self.start_date, end_date=self.end_date, verbosity=self.verbosity)
+            if self.workers > 0:
+                # workers resetting connections leads to references to models / connections getting stale and having their connection disconnected from under them. Resetting before the loop continues and it accesses the ORM makes it better.
+                db.close_connection()
+
+            qs = index.build_queryset(start_date=self.start_date, end_date=self.end_date)
             total = qs.count()
 
             if self.verbosity >= 1:
