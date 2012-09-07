@@ -236,7 +236,7 @@ AstroBin
 
 For general search.
 
-Using: ???
+Using: Solr
 
 * http://www.astrobin.com/
 
