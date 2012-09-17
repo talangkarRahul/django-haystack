@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime
 from decimal import Decimal
-import logging
 import os
 
 from mock import patch
