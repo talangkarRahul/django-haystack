@@ -45,8 +45,9 @@ class SQTestCase(TestCase):
         self.assertEqual(sq.split_expression('foo__startswith'), ('foo', 'startswith'))
         self.assertEqual(sq.split_expression('foo__range'), ('foo', 'range'))
 
-        # Unrecognized filter. Fall back to exact.
-        self.assertEqual(sq.split_expression('foo__moof'), ('foo', 'matches'))
+    def test_invalid_filter_type(self):
+        sq = SQ(foo='bar')
+        self.assertRaises(ValueError, sq.split_expression, 'foo__moof')
 
     def test_repr(self):
         self.assertEqual(repr(SQ(foo='bar')), '<SQ: AND foo__matches=bar>')
