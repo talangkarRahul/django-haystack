@@ -406,7 +406,8 @@ class SearchNode(tree.Node):
         field = parts[0]
 
         if len(parts) == 1 or parts[-1] not in VALID_FILTERS:
-            filter_type = 'contains'
+            # FIXME: we should raise an error for unknown filters to avoid confusion:
+            filter_type = 'matches'
         else:
             filter_type = parts.pop()
 
