@@ -294,10 +294,10 @@ Default is ``haystack.utils.default_get_identifier``.
 
 **Optional**
 
-This settings allows you to change the required similarity when using ``fuzzy``
+This setting allows you to change the required similarity when using ``fuzzy``
 filter.
 
-Defaults is ``0.5``
+Default is ``0.5``
 
 
 ``HAYSTACK_FUZZY_MAX_EXPANSIONS``
@@ -305,7 +305,7 @@ Defaults is ``0.5``
 
 **Optional**
 
-This settings allows you to change the number of terms fuzzy queries will
+This setting allows you to change the number of terms fuzzy queries will
 expand to when using ``fuzzy`` filter.
 
-Defaults is ``50``
+Default is ``50``

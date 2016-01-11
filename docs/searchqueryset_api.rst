@@ -793,7 +793,7 @@ The following lookup types are supported:
 * range
 * fuzzy
 
-Except by ``fuzzy``, these options are similar in function to the way Django's lookup types work.
+Except for ``fuzzy`` these options are similar in function to the way Django's lookup types work.
 The actual behavior of these lookups is backend-specific.
 
 .. warning::
