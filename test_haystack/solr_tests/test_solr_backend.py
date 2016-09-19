@@ -54,7 +54,7 @@ class SolrMockSearchIndex(indexes.SearchIndex, indexes.Indexable):
 class SolrMockSearchIndexWithSkipDocument(SolrMockSearchIndex):
 
         def prepare_text(self, obj):
-            if obj.author == 'daniel3':
+            if obj.author.startswith('daniel3'):
                 raise SkipDocument
             return u"Indexed!\n%s" % obj.id
 
@@ -222,7 +222,7 @@ class SolrSearchBackendTestCase(TestCase):
         for i in range(1, 4):
             mock = MockModel()
             mock.id = i
-            mock.author = 'daniel%s' % i
+            mock.author = u"daniel%s \N{WARNING SIGN} Non-BMP Unicode" % i
             mock.pub_date = datetime.date(2009, 2, 25) - datetime.timedelta(days=i)
             self.sample_objs.append(mock)
 
@@ -269,8 +269,8 @@ class SolrSearchBackendTestCase(TestCase):
             {
                 'django_id': '1',
                 'django_ct': 'core.mockmodel',
-                'name': 'daniel1',
-                'name_exact': 'daniel1',
+                'name': 'daniel1 \N{WARNING SIGN} Non-BMP Unicode',
+                'name_exact': 'daniel1 \N{WARNING SIGN} Non-BMP Unicode',
                 'text': 'Indexed!\n1',
                 'pub_date': '2009-02-24T00:00:00Z',
                 'id': 'core.mockmodel.1'
@@ -278,8 +278,8 @@ class SolrSearchBackendTestCase(TestCase):
             {
                 'django_id': '2',
                 'django_ct': 'core.mockmodel',
-                'name': 'daniel2',
-                'name_exact': 'daniel2',
+                'name': 'daniel2 \N{WARNING SIGN} Non-BMP Unicode',
+                'name_exact': 'daniel2 \N{WARNING SIGN} Non-BMP Unicode',
                 'text': 'Indexed!\n2',
                 'pub_date': '2009-02-23T00:00:00Z',
                 'id': 'core.mockmodel.2'
@@ -287,8 +287,8 @@ class SolrSearchBackendTestCase(TestCase):
             {
                 'django_id': '3',
                 'django_ct': 'core.mockmodel',
-                'name': 'daniel3',
-                'name_exact': 'daniel3',
+                'name': 'daniel3 \N{WARNING SIGN} Non-BMP Unicode',
+                'name_exact': 'daniel3 \N{WARNING SIGN} Non-BMP Unicode',
                 'text': 'Indexed!\n3',
                 'pub_date': '2009-02-22T00:00:00Z',
                 'id': 'core.mockmodel.3'
@@ -320,8 +320,8 @@ class SolrSearchBackendTestCase(TestCase):
             {
                 'django_id': '2',
                 'django_ct': 'core.mockmodel',
-                'name': 'daniel2',
-                'name_exact': 'daniel2',
+                'name': 'daniel2 \N{WARNING SIGN} Non-BMP Unicode',
+                'name_exact': 'daniel2 \N{WARNING SIGN} Non-BMP Unicode',
                 'text': 'Indexed!\n2',
                 'pub_date': '2009-02-23T00:00:00Z',
                 'id': 'core.mockmodel.2'
@@ -329,8 +329,8 @@ class SolrSearchBackendTestCase(TestCase):
             {
                 'django_id': '3',
                 'django_ct': 'core.mockmodel',
-                'name': 'daniel3',
-                'name_exact': 'daniel3',
+                'name': 'daniel3 \N{WARNING SIGN} Non-BMP Unicode',
+                'name_exact': 'daniel3 \N{WARNING SIGN} Non-BMP Unicode',
                 'text': 'Indexed!\n3',
                 'pub_date': '2009-02-22T00:00:00Z',
                 'id': 'core.mockmodel.3'
@@ -368,7 +368,8 @@ class SolrSearchBackendTestCase(TestCase):
         results = search['results']
         today = datetime.datetime.now().day
         self.assertEqual([result.today for result in results], [today, today, today])
-        self.assertEqual([result.name for result in results], ['daniel1', 'daniel2', 'daniel3'])
+        self.assertEqual([result.name for result in results],
+                         [u"daniel%s \N{WARNING SIGN} Non-BMP Unicode" % i for i in range(1,4)])
         self.assertEqual([result.pub_date for result in results],
                          [datetime.date(2009, 2, 25) - datetime.timedelta(days=1),
                           datetime.date(2009, 2, 25) - datetime.timedelta(days=2),
@@ -394,12 +395,12 @@ class SolrSearchBackendTestCase(TestCase):
         highlight_dict = {'simple.pre':'<i>', 'simple.post': '</i>'}
         self.assertEqual(self.sb.search('', highlight=highlight_dict), {'hits': 0, 'results': []})
         self.assertEqual(self.sb.search('Index', highlight=highlight_dict)['hits'], 3)
-        self.assertEqual([result.highlighted['text'][0] for result in self.sb.search('Index', highlight=highlight_dict)['results']], 
+        self.assertEqual([result.highlighted['text'][0] for result in self.sb.search('Index', highlight=highlight_dict)['results']],
             ['<i>Indexed</i>!\n1', '<i>Indexed</i>!\n2', '<i>Indexed</i>!\n3'])
 
         # full-form highlighting options
         highlight_dict = {'hl.simple.pre':'<i>', 'hl.simple.post': '</i>'}
-        self.assertEqual([result.highlighted['text'][0] for result in self.sb.search('Index', highlight=highlight_dict)['results']], 
+        self.assertEqual([result.highlighted['text'][0] for result in self.sb.search('Index', highlight=highlight_dict)['results']],
             ['<i>Indexed</i>!\n1', '<i>Indexed</i>!\n2', '<i>Indexed</i>!\n3'])
 
         self.assertEqual(self.sb.search('Indx')['hits'], 0)
@@ -409,7 +410,8 @@ class SolrSearchBackendTestCase(TestCase):
         self.assertEqual(self.sb.search('', facets={'name': {}}), {'hits': 0, 'results': []})
         results = self.sb.search('Index', facets={'name': {}})
         self.assertEqual(results['hits'], 3)
-        self.assertEqual(results['facets']['fields']['name'], [('daniel1', 1), ('daniel2', 1), ('daniel3', 1)])
+        self.assertEqual(results['facets']['fields']['name'],
+                                [(u"daniel%s \N{WARNING SIGN} Non-BMP Unicode" % i, 1) for i in range(1,4)])
 
         self.assertEqual(self.sb.search('', date_facets={'pub_date': {'start_date': datetime.date(2008, 2, 26), 'end_date': datetime.date(2008, 3, 26), 'gap_by': 'month', 'gap_amount': 1}}), {'hits': 0, 'results': []})
         results = self.sb.search('Index', date_facets={'pub_date': {'start_date': datetime.date(2008, 2, 26), 'end_date': datetime.date(2008, 3, 26), 'gap_by': 'month', 'gap_amount': 1}})
@@ -427,8 +429,9 @@ class SolrSearchBackendTestCase(TestCase):
         self.assertEqual(results['hits'], 3)
         self.assertEqual(results['stats']['name']['count'], 3)
 
-        self.assertEqual(self.sb.search('', narrow_queries=set(['name:daniel1'])), {'hits': 0, 'results': []})
-        results = self.sb.search('Index', narrow_queries=set(['name:daniel1']))
+        self.assertEqual(self.sb.search('', narrow_queries=set([u'name:"%s"' % self.sample_objs[0].author])),
+                         {'hits': 0, 'results': []})
+        results = self.sb.search('Index', narrow_queries=set([u'name:"%s"' % self.sample_objs[0].author]))
         self.assertEqual(results['hits'], 1)
 
         # Ensure that swapping the ``result_class`` works.
@@ -471,25 +474,26 @@ class SolrSearchBackendTestCase(TestCase):
     def test_altparser_query(self):
         self.sb.update(self.smmi, self.sample_objs)
 
-        results = self.sb.search(AltParser('dismax', "daniel1", qf='name', mm=1).prepare(self.sq))
+        results = self.sb.search(AltParser('dismax', u'"%s"' % self.sample_objs[0].author, qf='name', mm=1).prepare(self.sq))
         self.assertEqual(results['hits'], 1)
 
         # This should produce exactly the same result since all we have are mockmodel instances but we simply
         # want to confirm that using the AltParser doesn't break other options:
-        results = self.sb.search(AltParser('dismax', 'daniel1', qf='name', mm=1).prepare(self.sq),
+        results = self.sb.search(AltParser('dismax', u'"%s"' % self.sample_objs[0].author, qf='name', mm=1).prepare(self.sq),
                                  narrow_queries=set(('django_ct:core.mockmodel', )))
         self.assertEqual(results['hits'], 1)
 
-        results = self.sb.search(AltParser('dismax', '+indexed +daniel1', qf='text name', mm=1).prepare(self.sq))
+        results = self.sb.search(AltParser('dismax', '+indexed +"%s"' % self.sample_objs[0].author,
+                                           qf='text name', mm=1).prepare(self.sq))
         self.assertEqual(results['hits'], 1)
 
-        self.sq.add_filter(SQ(name=AltParser('dismax', 'daniel1', qf='name', mm=1)))
+        self.sq.add_filter(SQ(name=AltParser('dismax', u'"%s"' % self.sample_objs[0].author, qf='name', mm=1)))
         self.sq.add_filter(SQ(text='indexed'))
 
         new_q = self.sq._clone()
         new_q._reset()
 
-        new_q.add_filter(SQ(name='daniel1'))
+        new_q.add_filter(SQ(name__exact=self.sample_objs[0].author))
         new_q.add_filter(SQ(text=AltParser('dismax', 'indexed', qf='text')))
 
         results = new_q.get_results()
