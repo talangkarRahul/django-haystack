@@ -542,6 +542,8 @@ class SolrSearchBackend(BaseSearchBackend):
                     if string_key in index.fields and hasattr(
                         index.fields[string_key], "convert"
                     ):
+                        if len(value) == 1:
+                            value = value[0]
                         additional_fields[string_key] = index.fields[
                             string_key
                         ].convert(value)
